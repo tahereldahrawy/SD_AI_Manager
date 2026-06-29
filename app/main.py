@@ -99,16 +99,21 @@ async def _audit(request: Request, call_next):
         except Exception:
             user = None
         path = request.url.path
-        add_log(user, _describe(request.method, path),
-                detail="", status=response.status_code)
+        action = _describe(request.method, path)
+        add_log(user, action, detail="", status=response.status_code)
         # Fire matching event notifications off the request path (SMTP may block).
-        if response.status_code < 400:
+        # Skip config churn (rule management, auth) so it never self-notifies.
+        if response.status_code < 400 and not path.startswith(_NOTIFY_SKIP):
             threading.Thread(
                 target=core.fire_notifications,
-                args=(path, user, response.status_code),
+                args=(path, user, response.status_code, action),
                 daemon=True,
             ).start()
     return response
+
+
+# POST paths that should never trigger a notification (config/auth plumbing).
+_NOTIFY_SKIP = ("/notifications", "/login", "/logout")
 
 
 # --- auth plumbing ----------------------------------------------------------

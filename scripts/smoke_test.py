@@ -276,6 +276,25 @@ check("update notification rule", "Sub removed" in r.text and "ops@corp.com" in 
 r = c.post(f"/notifications/{new_id}/delete", follow_redirects=True)
 check("delete notification rule", "Sub removed" not in r.text)
 
+# catch-all rule + delete coverage + per-action subject + recipient de-dupe (mocked SMTP)
+import app.core as core_mod  # noqa: E402
+db.set_setting("smtp_host", "smtp.test")
+db.set_setting("reminder_to", "ops@corp.com")
+db.add_notification("All activity", "/*", "")                  # enabled, uses reminder_to
+db.add_notification("Dup users", "/users/*", "ops@corp.com")   # enabled, same recipient
+check("catch-all matches a delete path", any(x["label"] == "All activity"
+      for x in match_notifications("/users/5/delete")))
+sent = []
+core_mod._smtp_send = lambda s, msg: sent.append(msg)
+core_mod.fire_notifications("/users/5/delete", "admin", 303, "User: delete")
+check("catch-all fires email on delete", len(sent) >= 1)
+check("subject names the action", any("User: delete" in m["Subject"] for m in sent))
+check("de-dupe: one email per recipient", [m["To"] for m in sent].count("ops@corp.com") == 1)
+# undo test rules + SMTP so later POSTs in this suite don't fire notifications
+db.set_setting("smtp_host", "")
+with db.get_conn() as conn:
+    conn.execute("UPDATE notifications SET enabled = 0")
+
 # --- system log (audit middleware + view + export + clear) ---
 r = c.get("/logs")
 check("system log lists POST actions", "Create user" in r.text or "Create subscription" in r.text)

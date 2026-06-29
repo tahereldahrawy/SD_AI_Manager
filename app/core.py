@@ -287,8 +287,11 @@ def _smtp_send(s: dict, msg: EmailMessage) -> None:
         server.send_message(msg)
 
 
-def fire_notifications(path: str, account, status) -> None:
+def fire_notifications(path: str, account, status, action: str = "") -> None:
     """Send an email for each enabled rule matching this POST path.
+
+    `action` is the friendly description of what happened (e.g. "User: delete");
+    it names the email so a single catch-all rule still produces meaningful subjects.
 
     Runs in a daemon thread (SMTP can block / time out), so it must never raise.
     Skips silently when SMTP is unconfigured or no rule matches.
@@ -301,24 +304,28 @@ def fire_notifications(path: str, account, status) -> None:
         if not s.get("smtp_host"):
             return
         sender = s.get("smtp_from") or s.get("smtp_user") or "noreply@localhost"
+        what = action or (matched[0]["label"] if matched else path)
+        sent_to = set()  # de-dupe when several rules target the same recipient
         for r in matched:
             to = (r["recipient"] or "").strip() or s.get("reminder_to", "")
-            if not to:
+            if not to or to in sent_to:
                 continue
+            sent_to.add(to)
             msg = EmailMessage()
-            msg["Subject"] = f"[Subscription Manager] {r['label']}"
+            msg["Subject"] = f"[Subscription Manager] {what}"
             msg["From"] = sender
             msg["To"] = to
             msg.set_content(
-                f"Event: {r['label']}\n"
+                f"Activity: {what}\n"
+                f"Rule: {r['label']}\n"
                 f"By: {account or 'unknown'}\n"
                 f"Path: {path}\n"
                 f"Status: {status}\n"
             )
             try:
                 _smtp_send(s, msg)
-                add_log(account, "Notification sent", f"{r['label']} -> {to}", status)
+                add_log(account, "Notification sent", f"{what} -> {to}", status)
             except Exception as e:  # noqa: BLE001
-                add_log(account, "Notification failed", f"{r['label']}: {e}", None)
+                add_log(account, "Notification failed", f"{what}: {e}", None)
     except Exception:  # noqa: BLE001 — audit/notify must never break a request
         pass
