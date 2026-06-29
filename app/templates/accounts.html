@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+<h1>Login accounts</h1>
+<p class="muted">People who can sign in to this app. Separate from subscription members.</p>
+
+<div class="card narrow">
+    <h2>Add account</h2>
+    <form method="post" action="/accounts">
+        <label>Username <input name="username" required></label>
+        <label>Password <input name="password" type="password" minlength="6" required></label>
+        <button type="submit">Create</button>
+    </form>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr><th>Edit account</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for a in accounts %}
+            <tr>
+                <td>
+                    <form class="inline-form" method="post" action="/accounts/{{ a.id }}/update">
+                        <input name="username" value="{{ a.username }}" required>
+                        <input name="password" type="password" placeholder="new password (blank = keep)" minlength="6">
+                        <button type="submit">Save</button>
+                        {% if a.id == me %}<span class="muted">you</span>{% endif %}
+                    </form>
+                </td>
+                <td class="muted">{{ a.created_at }}</td>
+                <td>
+                    {% if a.id != me %}
+                    <form method="post" action="/accounts/{{ a.id }}/delete"
+                          onsubmit="return confirm('Delete account {{ a.username }}?');">
+                        <button class="danger" type="submit">Delete</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="3" class="muted">No accounts.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

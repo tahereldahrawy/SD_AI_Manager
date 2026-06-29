@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Subscriptions{% endblock %}
+{% block content %}
+<h1>Subscriptions</h1>
+
+<div class="card narrow">
+    <h2>Add subscription</h2>
+    <form method="post" action="/subscriptions">
+        <label>Name <input name="name" required></label>
+        <label>Seats <input name="seats" type="number" min="0" value="1" required></label>
+        <button type="submit">Create</button>
+    </form>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr><th>Name</th><th>Seats used</th><th>Created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for s in subs %}
+            <tr>
+                <td><a href="/subscriptions/{{ s.id }}">{{ s.name }}</a></td>
+                <td>
+                    <span class="badge {{ 'full' if s.consumed >= s.seats else 'ok' }}">
+                        {{ s.consumed }} / {{ s.seats }}
+                    </span>
+                </td>
+                <td class="muted">{{ s.created_at }}</td>
+                <td>
+                    <a href="/subscriptions/{{ s.id }}">Manage</a>
+                    <form method="post" action="/subscriptions/{{ s.id }}/delete"
+                          onsubmit="return confirm('Delete {{ s.name }}?');">
+                        <button class="danger" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="4" class="muted">No subscriptions yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

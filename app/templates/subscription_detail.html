@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ sub.name }}{% endblock %}
+{% block content %}
+<p><a href="/subscriptions">&larr; Subscriptions</a></p>
+<h1>{{ sub.name }}</h1>
+
+<div class="stats">
+    <div class="stat"><span class="num">{{ sub.seats }}</span> Seats</div>
+    <div class="stat"><span class="num">{{ consumed }}</span> Consumed</div>
+    <div class="stat"><span class="num">{{ free }}</span> Free</div>
+</div>
+
+<div class="card narrow">
+    <h2>Edit seats</h2>
+    <form method="post" action="/subscriptions/{{ sub.id }}/seats">
+        <label>Seats
+            <input name="seats" type="number" min="{{ consumed }}" value="{{ sub.seats }}" required>
+        </label>
+        <button type="submit">Update</button>
+    </form>
+    <p class="muted">Cannot go below {{ consumed }} (already consumed).</p>
+</div>
+
+<div class="card narrow">
+    <h2>Assign user</h2>
+    {% if free <= 0 %}
+        <p class="muted">No free seats. Increase seats to assign more users.</p>
+    {% elif available %}
+        <form method="post" action="/subscriptions/{{ sub.id }}/assign">
+            <label>User
+                <select name="user_id" required>
+                    {% for u in available %}
+                        <option value="{{ u.id }}">{{ u.name }} ({{ u.email }})</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <button type="submit">Assign</button>
+        </form>
+    {% else %}
+        <p class="muted">All users already assigned.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Assigned users ({{ consumed }})</h2>
+    <table>
+        <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+        <tbody>
+        {% for u in assigned %}
+            <tr>
+                <td>{{ u.name }}</td>
+                <td>{{ u.email }}</td>
+                <td>
+                    <form method="post" action="/subscriptions/{{ sub.id }}/unassign">
+                        <input type="hidden" name="user_id" value="{{ u.id }}">
+                        <button class="danger" type="submit">Unassign</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="3" class="muted">No users assigned.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

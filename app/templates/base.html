@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Subscription Manager{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+{% if request.session.get("account_id") %}
+<nav>
+    <a class="brand" href="/">Subscription Manager</a>
+    <a href="/users">Users</a>
+    <a href="/subscriptions">Subscriptions</a>
+    <a href="/accounts">Accounts</a>
+    <span class="spacer"></span>
+    <span class="who">{{ request.session.get("username") }}</span>
+    <a href="/logout">Logout</a>
+</nav>
+{% endif %}
+
+<main>
+    {% for f in flashes %}
+        <div class="flash {{ f.category }}">{{ f.message }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+</main>
+</body>
+</html>
