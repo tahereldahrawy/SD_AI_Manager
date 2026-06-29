@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Billing{% endblock %}
+{% block content %}
+<h1>Billing &amp; reminders</h1>
+
+<div class="card narrow">
+    <h2>New invoice / reminder</h2>
+    <form method="post" action="/invoices">
+        <label>Subscription
+            <select name="subscription_id" required>
+                {% for s in subs %}
+                    <option value="{{ s.id }}">
+                        {{ s.name }}{% if s.unit_cost is not none %}
+                        — charge {{ fmt_money((s.unit_cost or 0) * s.consumed, s.currency) }}{% endif %}
+                    </option>
+                {% endfor %}
+            </select>
+        </label>
+        <label>Label <input name="label" placeholder="e.g. June 2026" required></label>
+        <label>Due date <span class="muted">(optional)</span>
+            <input name="due_date" type="date">
+        </label>
+        <label>Amount <span class="muted">(blank = current charge)</span>
+            <input name="amount" type="number" step="0.01" min="0">
+        </label>
+        <button type="submit">Create (due)</button>
+    </form>
+</div>
+
+<div class="card">
+    <div class="row-between">
+        <div class="filters">
+            <a href="/invoices" class="{{ 'active' if not status }}">All</a>
+            <a href="/invoices?status=due" class="{{ 'active' if status == 'due' }}">Due</a>
+            <a href="/invoices?status=paid" class="{{ 'active' if status == 'paid' }}">Paid</a>
+        </div>
+        <form method="post" action="/reminders/send">
+            <button type="submit" title="Email a digest of due bills to the configured recipient">
+                Send reminder email now
+            </button>
+        </form>
+    </div>
+    <table>
+        <thead>
+            <tr><th>Subscription</th><th>Label</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+        {% for i in invoices %}
+            <tr>
+                <td><a href="/subscriptions/{{ i.subscription_id }}">{{ i.sub_name }}</a></td>
+                <td>{{ i.label }}</td>
+                <td>{{ fmt_money(i.amount, i.currency) }}</td>
+                <td class="{{ 'overdue' if i.status == 'due' and i.due_date and i.due_date < today }}">
+                    {{ i.due_date or '—' }}
+                </td>
+                <td><span class="badge {{ 'ok' if i.status == 'paid' else 'full' }}">{{ i.status }}</span></td>
+                <td>
+                    {% if i.status == 'due' %}
+                    <form method="post" action="/invoices/{{ i.id }}/paid">
+                        <button type="submit">Mark paid</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/invoices/{{ i.id }}/due">
+                        <button type="submit">Reopen</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/invoices/{{ i.id }}/delete"
+                          onsubmit="return confirm('Delete this invoice?');">
+                        <button class="danger" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="6" class="muted">No invoices.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

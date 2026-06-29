@@ -8,13 +8,17 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import export
+from . import core, export
 from .auth import authenticate, hash_password
-from .db import get_conn, init_db, now_iso
+from .db import (
+    all_settings, get_conn, get_setting, init_db, now_iso, set_setting, today_iso,
+)
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE.parent / "data"
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+templates.env.globals["fmt_money"] = core.fmt_money
+templates.env.globals["CURRENCIES"] = core.CURRENCIES
 
 
 def _secret_key() -> str:
@@ -62,6 +66,9 @@ def flash(request: Request, message: str, category: str = "info") -> None:
 
 def ctx(request: Request, **kw):
     base = {"request": request, "flashes": request.session.pop("_flashes", [])}
+    if request.session.get("account_id"):
+        base["nav"] = core.sidebar_entries(request.url.path)
+        base["due_count"] = core.due_invoice_count()
     base.update(kw)
     return base
 
@@ -156,7 +163,7 @@ def subs_page(request: Request, _: int = Depends(login_required)):
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT s.id, s.name, s.seats, s.created_at,
+            SELECT s.id, s.name, s.seats, s.unit_cost, s.currency, s.created_at,
                    (SELECT COUNT(*) FROM assignments a WHERE a.subscription_id = s.id) AS consumed
             FROM subscriptions s ORDER BY s.name
             """
@@ -164,19 +171,44 @@ def subs_page(request: Request, _: int = Depends(login_required)):
     return templates.TemplateResponse(request, "subscriptions.html", ctx(request, subs=rows))
 
 
+def _parse_cost(raw: str):
+    """Optional unit cost. Returns (value_or_None, error_or_None)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None, None
+    try:
+        v = float(raw)
+    except ValueError:
+        return None, "Unit cost must be a number."
+    if v < 0:
+        return None, "Unit cost cannot be negative."
+    return v, None
+
+
+def _clean_currency(raw: str):
+    raw = (raw or "").strip().upper()
+    return raw if raw in core.CURRENCIES else None
+
+
 @app.post("/subscriptions")
 def create_subscription(
     request: Request,
     name: str = Form(...),
     seats: int = Form(...),
+    unit_cost: str = Form(""),
+    currency: str = Form(""),
     _: int = Depends(login_required),
 ):
     name = name.strip()
+    cost, err = _parse_cost(unit_cost)
     if not name:
         flash(request, "Subscription name is required.", "error")
         return RedirectResponse("/subscriptions", status_code=303)
     if seats < 0:
         flash(request, "Seats cannot be negative.", "error")
+        return RedirectResponse("/subscriptions", status_code=303)
+    if err:
+        flash(request, err, "error")
         return RedirectResponse("/subscriptions", status_code=303)
     with get_conn() as conn:
         exists = conn.execute(
@@ -186,11 +218,33 @@ def create_subscription(
             flash(request, f"Subscription '{name}' already exists.", "error")
             return RedirectResponse("/subscriptions", status_code=303)
         conn.execute(
-            "INSERT INTO subscriptions (name, seats, created_at) VALUES (?, ?, ?)",
-            (name, seats, now_iso()),
+            "INSERT INTO subscriptions (name, seats, unit_cost, currency, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (name, seats, cost, _clean_currency(currency), now_iso()),
         )
     flash(request, f"Subscription '{name}' created with {seats} seats.", "success")
     return RedirectResponse("/subscriptions", status_code=303)
+
+
+@app.post("/subscriptions/{sub_id}/pricing")
+def edit_pricing(
+    request: Request,
+    sub_id: int,
+    unit_cost: str = Form(""),
+    currency: str = Form(""),
+    _: int = Depends(login_required),
+):
+    cost, err = _parse_cost(unit_cost)
+    if err:
+        flash(request, err, "error")
+    else:
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE subscriptions SET unit_cost = ?, currency = ? WHERE id = ?",
+                (cost, _clean_currency(currency), sub_id),
+            )
+        flash(request, "Pricing updated.", "success")
+    return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
 
 
 @app.post("/subscriptions/{sub_id}/delete")
@@ -227,11 +281,21 @@ def sub_detail(request: Request, sub_id: int, _: int = Depends(login_required)):
             """,
             (sub_id,),
         ).fetchall()
+        invoices = conn.execute(
+            "SELECT * FROM invoices WHERE subscription_id = ? "
+            "ORDER BY status, due_date IS NULL, due_date DESC",
+            (sub_id,),
+        ).fetchall()
+    consumed = len(assigned)
+    charge = (sub["unit_cost"] or 0) * consumed
     return templates.TemplateResponse(
         request,
         "subscription_detail.html",
         ctx(request, sub=sub, assigned=assigned, available=available,
-            consumed=len(assigned), free=sub["seats"] - len(assigned)),
+            consumed=consumed, free=sub["seats"] - consumed,
+            invoices=invoices, charge=charge,
+            currency=sub["currency"] or core.default_currency(),
+            today=today_iso()),
     )
 
 
@@ -415,6 +479,236 @@ def delete_account(request: Request, account_id: int, _: int = Depends(login_req
     return RedirectResponse("/accounts", status_code=303)
 
 
+# --- invoices / billing reminders -------------------------------------------
+@app.get("/invoices")
+def invoices_page(request: Request, status: str = "", _: int = Depends(login_required)):
+    with get_conn() as conn:
+        q = (
+            "SELECT i.*, s.name AS sub_name FROM invoices i "
+            "JOIN subscriptions s ON s.id = i.subscription_id"
+        )
+        params = ()
+        if status in ("due", "paid"):
+            q += " WHERE i.status = ?"
+            params = (status,)
+        q += " ORDER BY i.status, i.due_date IS NULL, i.due_date"
+        invoices = conn.execute(q, params).fetchall()
+        # subscriptions + their current per-period charge to prefill the form
+        subs = conn.execute(
+            """
+            SELECT s.id, s.name, s.unit_cost, s.currency,
+                   (SELECT COUNT(*) FROM assignments a WHERE a.subscription_id = s.id) AS consumed
+            FROM subscriptions s ORDER BY s.name
+            """
+        ).fetchall()
+    return templates.TemplateResponse(
+        request, "invoices.html",
+        ctx(request, invoices=invoices, subs=subs, status=status, today=today_iso(),
+            default_currency=core.default_currency()),
+    )
+
+
+@app.post("/invoices")
+def create_invoice(
+    request: Request,
+    subscription_id: int = Form(...),
+    label: str = Form(...),
+    due_date: str = Form(""),
+    amount: str = Form(""),
+    _: int = Depends(login_required),
+):
+    label = label.strip()
+    if not label:
+        flash(request, "Invoice label is required (e.g. 'June 2026').", "error")
+        return RedirectResponse("/invoices", status_code=303)
+    with get_conn() as conn:
+        sub = conn.execute(
+            "SELECT * FROM subscriptions WHERE id = ?", (subscription_id,)
+        ).fetchone()
+        if not sub:
+            flash(request, "Subscription not found.", "error")
+            return RedirectResponse("/invoices", status_code=303)
+        if (amount or "").strip():
+            amt, err = _parse_cost(amount)
+            if err:
+                flash(request, err.replace("Unit cost", "Amount"), "error")
+                return RedirectResponse("/invoices", status_code=303)
+        else:
+            consumed = conn.execute(
+                "SELECT COUNT(*) FROM assignments WHERE subscription_id = ?",
+                (subscription_id,),
+            ).fetchone()[0]
+            amt = (sub["unit_cost"] or 0) * consumed
+        conn.execute(
+            "INSERT INTO invoices (subscription_id, label, amount, currency, "
+            "due_date, status, created_at) VALUES (?, ?, ?, ?, ?, 'due', ?)",
+            (subscription_id, label, amt, sub["currency"] or core.default_currency(),
+             due_date.strip() or None, now_iso()),
+        )
+    flash(request, "Invoice created (marked due).", "success")
+    return RedirectResponse(request.headers.get("referer", "/invoices"), status_code=303)
+
+
+@app.post("/invoices/{invoice_id}/paid")
+def mark_paid(request: Request, invoice_id: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?",
+            (now_iso(), invoice_id),
+        )
+    flash(request, "Invoice marked paid.", "success")
+    return RedirectResponse(request.headers.get("referer", "/invoices"), status_code=303)
+
+
+@app.post("/invoices/{invoice_id}/due")
+def mark_due(request: Request, invoice_id: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE invoices SET status = 'due', paid_at = NULL WHERE id = ?",
+            (invoice_id,),
+        )
+    flash(request, "Invoice reverted to due.", "info")
+    return RedirectResponse(request.headers.get("referer", "/invoices"), status_code=303)
+
+
+@app.post("/invoices/{invoice_id}/delete")
+def delete_invoice(request: Request, invoice_id: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
+    flash(request, "Invoice deleted.", "success")
+    return RedirectResponse(request.headers.get("referer", "/invoices"), status_code=303)
+
+
+@app.post("/reminders/send")
+def send_reminders_now(request: Request, _: int = Depends(login_required)):
+    try:
+        ok, msg = core.send_reminders()
+        flash(request, msg, "success" if ok else "error")
+    except Exception as e:  # noqa: BLE001 - surface SMTP errors to the user
+        flash(request, f"Email failed: {e}", "error")
+    return RedirectResponse(request.headers.get("referer", "/invoices"), status_code=303)
+
+
+# --- custom tabs ------------------------------------------------------------
+@app.get("/tabs/new")
+def new_tab_form(request: Request, _: int = Depends(login_required)):
+    sections = [core.SECTION_BY_KEY[k] for k in core.SUMMARIZABLE]
+    return templates.TemplateResponse(
+        request, "custom_tab_new.html", ctx(request, sections=sections)
+    )
+
+
+@app.post("/tabs")
+async def create_tab(request: Request, _: int = Depends(login_required)):
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    chosen = [k for k in core.SUMMARIZABLE if form.get(f"section_{k}")]
+    if not name:
+        flash(request, "Tab name is required.", "error")
+        return RedirectResponse("/tabs/new", status_code=303)
+    if not chosen:
+        flash(request, "Pick at least one section.", "error")
+        return RedirectResponse("/tabs/new", status_code=303)
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO custom_tabs (name, created_at) VALUES (?, ?)",
+            (name, now_iso()),
+        )
+        tab_id = cur.lastrowid
+        for pos, k in enumerate(chosen):
+            conn.execute(
+                "INSERT INTO custom_tab_items (tab_id, section_key, position) "
+                "VALUES (?, ?, ?)",
+                (tab_id, k, pos),
+            )
+    flash(request, f"Custom tab '{name}' created.", "success")
+    return RedirectResponse(f"/tabs/{tab_id}", status_code=303)
+
+
+@app.get("/tabs/{tab_id}")
+def view_tab(request: Request, tab_id: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        tab = conn.execute(
+            "SELECT * FROM custom_tabs WHERE id = ?", (tab_id,)
+        ).fetchone()
+        if not tab:
+            flash(request, "Tab not found.", "error")
+            return RedirectResponse("/", status_code=303)
+        keys = [
+            r["section_key"]
+            for r in conn.execute(
+                "SELECT section_key FROM custom_tab_items WHERE tab_id = ? "
+                "ORDER BY position",
+                (tab_id,),
+            )
+        ]
+    cards = [core.section_summary(k) for k in keys]
+    return templates.TemplateResponse(
+        request, "custom_tab.html", ctx(request, tab=tab, cards=cards)
+    )
+
+
+@app.post("/tabs/{tab_id}/delete")
+def delete_tab(request: Request, tab_id: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM custom_tabs WHERE id = ?", (tab_id,))
+    flash(request, "Custom tab deleted.", "success")
+    return RedirectResponse("/", status_code=303)
+
+
+# --- settings ---------------------------------------------------------------
+SETTING_KEYS = [
+    "default_currency", "smtp_host", "smtp_port", "smtp_user", "smtp_password",
+    "smtp_from", "smtp_tls", "reminder_to", "reminder_lead_days",
+]
+
+
+@app.get("/settings")
+def settings_page(request: Request, _: int = Depends(login_required)):
+    s = all_settings()
+    # sidebar customization model: each system section + show flag + order
+    hidden = set(core._csv_list("sidebar_hidden"))
+    order = core._csv_list("sidebar_order")
+    sidebar = []
+    for i, sec in enumerate(core.SYSTEM_SECTIONS):
+        k = sec["key"]
+        pos = order.index(k) if k in order else len(order) + i
+        sidebar.append({"key": k, "label": sec["label"],
+                        "show": k not in hidden, "order": pos})
+    sidebar.sort(key=lambda x: x["order"])
+    return templates.TemplateResponse(
+        request, "settings.html",
+        ctx(request, s=s, sidebar=sidebar, default_currency=core.default_currency()),
+    )
+
+
+@app.post("/settings")
+async def settings_save(request: Request, _: int = Depends(login_required)):
+    form = await request.form()
+    for k in SETTING_KEYS:
+        if k in form:
+            set_setting(k, (form.get(k) or "").strip())
+    set_setting("smtp_tls", "1" if form.get("smtp_tls") else "0")
+
+    # sidebar: build order from numeric inputs, hidden from missing show flags
+    pairs = []
+    hidden = []
+    for sec in core.SYSTEM_SECTIONS:
+        k = sec["key"]
+        try:
+            pos = int(form.get(f"order_{k}", "0"))
+        except ValueError:
+            pos = 0
+        pairs.append((pos, k))
+        if not form.get(f"show_{k}"):
+            hidden.append(k)
+    pairs.sort()
+    set_setting("sidebar_order", ",".join(k for _, k in pairs))
+    set_setting("sidebar_hidden", ",".join(hidden))
+    flash(request, "Settings saved.", "success")
+    return RedirectResponse("/settings", status_code=303)
+
+
 # --- export -----------------------------------------------------------------
 @app.get("/export")
 def export_data(
@@ -423,7 +717,7 @@ def export_data(
     fmt: str = "xlsx",
     _: int = Depends(login_required),
 ):
-    if kind not in ("users", "subscriptions", "assignments", "all"):
+    if kind not in ("users", "subscriptions", "assignments", "invoices", "all"):
         flash(request, "Unknown export kind.", "error")
         return RedirectResponse("/", status_code=303)
     if fmt == "csv":

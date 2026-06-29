@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from .db import get_conn
 
 # (header row, list-of-tuples) per dataset, computed on demand.
-DATASETS = ("users", "subscriptions", "assignments")
+DATASETS = ("users", "subscriptions", "assignments", "invoices")
 
 
 def _fetch(kind: str):
@@ -27,13 +27,27 @@ def _fetch(kind: str):
         if kind == "subscriptions":
             rows = conn.execute(
                 """
-                SELECT s.id, s.name, s.seats,
+                SELECT s.id, s.name, s.seats, s.unit_cost, s.currency,
                        (SELECT COUNT(*) FROM assignments a WHERE a.subscription_id = s.id) AS consumed,
                        s.created_at
                 FROM subscriptions s ORDER BY s.id
                 """
             ).fetchall()
-            headers = ["id", "name", "seats", "seats_consumed", "created_at"]
+            headers = ["id", "name", "seats", "unit_cost", "currency",
+                       "seats_consumed", "created_at"]
+            return headers, [tuple(r) for r in rows]
+
+        if kind == "invoices":
+            rows = conn.execute(
+                """
+                SELECT i.id, s.name AS subscription, i.label, i.amount, i.currency,
+                       i.due_date, i.status, i.created_at, i.paid_at
+                FROM invoices i JOIN subscriptions s ON s.id = i.subscription_id
+                ORDER BY i.id
+                """
+            ).fetchall()
+            headers = ["id", "subscription", "label", "amount", "currency",
+                       "due_date", "status", "created_at", "paid_at"]
             return headers, [tuple(r) for r in rows]
 
         if kind == "assignments":

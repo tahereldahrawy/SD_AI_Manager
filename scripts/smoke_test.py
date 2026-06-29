@@ -144,5 +144,71 @@ check("last-account-delete blocked",
       ("cannot delete the last account" in r.text.lower())
       or ("cannot delete the account you are logged in as" in r.text.lower()))
 
+# --- v2: cost, invoices, custom tabs, reminders, settings ---
+# set per-seat pricing on Pro Plan (2 users assigned -> charge 20.00 USD)
+r = c.post(f"/subscriptions/{sub_id}/pricing",
+           data={"unit_cost": "10", "currency": "USD"}, follow_redirects=True)
+check("set pricing ok", "Pricing updated" in r.text)
+r = c.get(f"/subscriptions/{sub_id}")
+check("current charge computed (10 x 2)", "20.00 USD" in r.text)
+
+# create invoice with blank amount -> defaults to current charge (20.00)
+r = c.post("/invoices",
+           data={"subscription_id": sub_id, "label": "June 2026", "due_date": "2020-01-01", "amount": ""},
+           follow_redirects=True)
+check("create invoice ok", "June 2026" in r.text and "20.00 USD" in r.text)
+check("overdue past-due flagged", "overdue" in r.text)
+
+with db.get_conn() as conn:
+    inv_id = conn.execute("SELECT id FROM invoices WHERE label='June 2026'").fetchone()[0]
+    due_n = conn.execute("SELECT COUNT(*) FROM invoices WHERE status='due'").fetchone()[0]
+check("invoice starts due", due_n == 1)
+
+# mark paid, then reopen
+r = c.post(f"/invoices/{inv_id}/paid", follow_redirects=True)
+check("mark paid ok", "marked paid" in r.text.lower())
+with db.get_conn() as conn:
+    st = conn.execute("SELECT status FROM invoices WHERE id=?", (inv_id,)).fetchone()[0]
+check("status is paid", st == "paid")
+r = c.post(f"/invoices/{inv_id}/due", follow_redirects=True)
+check("reopen ok", "reverted to due" in r.text.lower())
+
+# dashboard badge counts due invoices
+r = c.get("/")
+check("dashboard shows bills-due stat", "Bills due" in r.text)
+
+# send reminder with no SMTP configured -> friendly error
+r = c.post("/reminders/send", follow_redirects=True)
+check("reminder needs SMTP config", "SMTP host and recipient" in r.text)
+
+# custom tab (summary of users + invoices)
+r = c.post("/tabs", data={"name": "Overview", "section_users": "1", "section_invoices": "1"},
+           follow_redirects=True)
+check("create custom tab ok", "Overview" in r.text and "login accounts" not in r.text)
+check("custom tab summarizes users", "users" in r.text)
+with db.get_conn() as conn:
+    tab_id = conn.execute("SELECT id FROM custom_tabs WHERE name='Overview'").fetchone()[0]
+r = c.get("/")  # sidebar should now list the custom tab
+check("custom tab appears in sidebar", "/tabs/%d" % tab_id in r.text)
+
+# export invoices
+r = c.get("/export?kind=invoices&fmt=csv")
+check("export invoices csv", r.status_code == 200 and b"June 2026" in r.content)
+r = c.get("/export?kind=all&fmt=xlsx")
+check("export all still works", r.status_code == 200 and r.content[:2] == b"PK")
+
+# settings: change default currency + hide a sidebar tab
+r = c.post("/settings", data={
+    "default_currency": "EUR", "smtp_port": "587", "reminder_lead_days": "7",
+    "show_dashboard": "1", "show_users": "1", "show_subscriptions": "1",
+    "show_invoices": "1", "show_settings": "1",  # accounts intentionally omitted -> hidden
+    "order_dashboard": "0", "order_users": "1", "order_subscriptions": "2",
+    "order_invoices": "3", "order_accounts": "4", "order_settings": "5",
+}, follow_redirects=True)
+check("settings saved", "Settings saved" in r.text)
+check("default currency now EUR", 'value="EUR" selected' in r.text or "EUR</option>" in r.text)
+r = c.get("/")
+check("hidden tab removed from sidebar", 'href="/accounts"' not in r.text)
+
 print(f"\n{ok} passed, {fail} failed")
 sys.exit(1 if fail else 0)

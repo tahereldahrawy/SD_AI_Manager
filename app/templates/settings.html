@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<form method="post" action="/settings">
+    <div class="card narrow">
+        <h2>General</h2>
+        <label>Default currency
+            <select name="default_currency">
+                {% for c in CURRENCIES %}
+                    <option value="{{ c }}" {{ 'selected' if default_currency == c }}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </label>
+    </div>
+
+    <div class="card narrow">
+        <h2>Email reminders (SMTP)</h2>
+        <p class="muted">Used by the "Send reminder email now" button and the scheduled
+            <code>send_reminders.py</code> task.</p>
+        <label>SMTP host <input name="smtp_host" value="{{ s.get('smtp_host','') }}" placeholder="smtp.office365.com"></label>
+        <label>Port <input name="smtp_port" type="number" value="{{ s.get('smtp_port','587') }}"></label>
+        <label class="check"><input type="checkbox" name="smtp_tls" value="1" {{ 'checked' if s.get('smtp_tls','1') == '1' }}> Use STARTTLS</label>
+        <label>Username <input name="smtp_user" value="{{ s.get('smtp_user','') }}"></label>
+        <label>Password <input name="smtp_password" type="password" value="{{ s.get('smtp_password','') }}"></label>
+        <label>From address <input name="smtp_from" value="{{ s.get('smtp_from','') }}" placeholder="billing@yourco.com"></label>
+        <label>Send reminders to <input name="reminder_to" value="{{ s.get('reminder_to','') }}" placeholder="me@yourco.com, finance@yourco.com"></label>
+        <label>Remind this many days before due
+            <input name="reminder_lead_days" type="number" min="0" value="{{ s.get('reminder_lead_days','7') }}">
+        </label>
+    </div>
+
+    <div class="card narrow">
+        <h2>Sidebar</h2>
+        <p class="muted">Show/hide and reorder the system tabs (lower number = higher).</p>
+        <table>
+            <thead><tr><th>Show</th><th>Tab</th><th>Order</th></tr></thead>
+            <tbody>
+            {% for e in sidebar %}
+                <tr>
+                    <td><input type="checkbox" name="show_{{ e.key }}" value="1" {{ 'checked' if e.show }}></td>
+                    <td>{{ e.label }}</td>
+                    <td><input name="order_{{ e.key }}" type="number" value="{{ e.order }}" style="width:70px"></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <button type="submit">Save settings</button>
+</form>
+{% endblock %}

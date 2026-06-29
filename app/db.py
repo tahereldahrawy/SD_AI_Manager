@@ -1,6 +1,6 @@
 """SQLite access layer. Single-file DB, no external server."""
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -34,11 +34,45 @@ CREATE TABLE IF NOT EXISTS assignments (
     created_at      TEXT NOT NULL,
     PRIMARY KEY (user_id, subscription_id)
 );
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id              INTEGER PRIMARY KEY,
+    subscription_id INTEGER NOT NULL REFERENCES subscriptions(id) ON DELETE CASCADE,
+    label           TEXT NOT NULL,
+    amount          REAL NOT NULL,
+    currency        TEXT,
+    due_date        TEXT,
+    status          TEXT NOT NULL DEFAULT 'due' CHECK (status IN ('due', 'paid')),
+    created_at      TEXT NOT NULL,
+    paid_at         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS custom_tabs (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS custom_tab_items (
+    tab_id      INTEGER NOT NULL REFERENCES custom_tabs(id) ON DELETE CASCADE,
+    section_key TEXT NOT NULL,
+    position    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (tab_id, section_key)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def today_iso() -> str:
+    return date.today().isoformat()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -49,6 +83,38 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive, idempotent column adds for upgrades from v1."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(subscriptions)")}
+    if "unit_cost" not in cols:
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN unit_cost REAL")
+    if "currency" not in cols:
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN currency TEXT")
+
+
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
+
+
+# --- settings key/value -----------------------------------------------------
+def get_setting(key: str, default: str = "") -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row and row["value"] is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def all_settings() -> dict:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}

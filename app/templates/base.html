@@ -6,20 +6,30 @@
     <title>{% block title %}Subscription Manager{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-{% if request.session.get("account_id") %}
-<nav>
-    <a class="brand" href="/">Subscription Manager</a>
-    <a href="/users">Users</a>
-    <a href="/subscriptions">Subscriptions</a>
-    <a href="/accounts">Accounts</a>
-    <span class="spacer"></span>
-    <span class="who">{{ request.session.get("username") }}</span>
-    <a href="/logout">Logout</a>
-</nav>
+{% set signed_in = request.session.get("account_id") %}
+<body class="{% if signed_in %}layout{% endif %}">
+{% if signed_in %}
+    <aside class="sidebar">
+        <a class="brand" href="/">Subscription<br>Manager</a>
+        <nav class="side-nav">
+            {% for e in nav %}
+                <a href="{{ e.url }}"
+                   class="{% if e.active %}active{% endif %} {% if e.custom %}is-custom{% endif %}">
+                    <span>{{ e.label }}</span>
+                    {% if e.key == 'invoices' and due_count %}
+                        <span class="pill">{{ due_count }}</span>
+                    {% endif %}
+                </a>
+            {% endfor %}
+            <a href="/tabs/new" class="add-tab">+ Custom tab</a>
+        </nav>
+        <div class="side-foot">
+            <div class="who">{{ request.session.get("username") }}</div>
+            <a href="/logout">Logout</a>
+        </div>
+    </aside>
 {% endif %}
-
-<main>
+<main class="{% if not signed_in %}centered{% endif %}">
     {% for f in flashes %}
         <div class="flash {{ f.category }}">{{ f.message }}</div>
     {% endfor %}

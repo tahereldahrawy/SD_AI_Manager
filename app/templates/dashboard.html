@@ -6,6 +6,7 @@
     <a class="stat" href="/users"><span class="num">{{ n_users }}</span> Users</a>
     <a class="stat" href="/subscriptions"><span class="num">{{ n_subs }}</span> Subscriptions</a>
     <div class="stat"><span class="num">{{ n_assign }}</span> Seats consumed</div>
+    <a class="stat" href="/invoices?status=due"><span class="num">{{ due_count or 0 }}</span> Bills due</a>
 </div>
 
 <div class="card">
@@ -13,7 +14,7 @@
     <p class="muted">Download a snapshot of the data.</p>
     <table class="export-grid">
         <tr><th>Dataset</th><th>CSV</th><th>Excel</th></tr>
-        {% for k, label in [("all","Everything"),("users","Users"),("subscriptions","Subscriptions"),("assignments","Assignments")] %}
+        {% for k, label in [("all","Everything"),("users","Users"),("subscriptions","Subscriptions"),("assignments","Assignments"),("invoices","Invoices")] %}
         <tr>
             <td>{{ label }}</td>
             <td><a href="/export?kind={{ k }}&fmt=csv">CSV{% if k == 'all' %} (zip){% endif %}</a></td>

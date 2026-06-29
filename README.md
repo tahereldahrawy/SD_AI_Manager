@@ -6,26 +6,38 @@ FastAPI + SQLite + server-rendered HTML. Runs over HTTPS on a LAN.
 ## What it does
 
 - **Users** — create with unique email (duplicate emails rejected).
-- **Subscriptions** — create with a unique name and an editable seat count.
+- **Subscriptions** — create with a unique name, editable seat count, and an
+  **optional per-seat cost + currency**.
 - **Assignments** — assign users to a subscription; each assignment consumes one seat.
   - Cannot assign past the seat limit.
   - Cannot shrink seats below the number already consumed.
-- **Export** — Users, Subscriptions, Assignments, or Everything, as CSV or Excel.
-- **Login** — a small set of named accounts; sessions over HTTPS only.
+  - Current charge = `unit_cost × seats consumed`, shown live on the subscription.
+- **Billing & reminders** — create invoices per subscription (amount pre-fills from
+  the current charge). Each is **due** until ticked **paid**. Overdue dates are
+  flagged; the sidebar shows a due-count badge. Optional **email reminders** via SMTP.
+- **Export** — Users, Subscriptions, Assignments, Invoices, or Everything, as CSV or Excel.
+- **Login** — a small set of named accounts; full GUI account management; HTTPS-only sessions.
+- **Left sidebar nav** with **custom tabs**: the "+" button builds a named tab that
+  shows compact summary cards for the sections you pick.
+- **Settings** page: default currency, SMTP config, reminder recipients/lead-days,
+  and sidebar show/hide + ordering.
 
 ## Layout
 
 ```
 app/
   main.py        routes + validation
-  db.py          SQLite schema + connection
+  db.py          SQLite schema + migrations + settings
+  core.py        sidebar model, currencies, summaries, email reminders
   auth.py        password hashing (pbkdf2_sha256)
   export.py      CSV / XLSX export
   templates/     HTML (Jinja2)
   static/        CSS
 scripts/
-  gen_cert.py    self-signed TLS cert
-  create_account.py  add / reset a login account
+  gen_cert.py            self-signed TLS cert
+  create_account.py      add / reset a login account
+  send_reminders.py      email a digest of due bills (run on a schedule)
+  register_reminder_task.ps1  register the daily Windows scheduled task
 run.ps1          one-command start (venv + deps + cert + server)
 data/            SQLite DB, cert, session key (created at runtime, gitignored)
 ```
@@ -66,6 +78,20 @@ hostnames/IPs in the cert, delete `data\cert.pem` and regenerate:
 .\.venv\Scripts\python.exe scripts\gen_cert.py myserver 192.168.1.50
 ```
 
+## Email reminders (optional)
+
+1. In the app, open **Settings** and fill SMTP host/port/user/password, the From
+   address, recipient(s), and how many days before the due date to remind.
+2. Test it with the **"Send reminder email now"** button on the Billing page.
+3. To send automatically every day, register a Windows scheduled task:
+
+```powershell
+.\scripts\register_reminder_task.ps1 08:00   # daily at 08:00 (time optional)
+```
+
+The task runs `scripts\send_reminders.py`, which emails one digest of all due /
+overdue bills within the reminder window. No email is sent if nothing is due.
+
 ## Security notes
 
 - App binds with TLS directly (uvicorn `--ssl-*`); traffic is encrypted on the wire.
@@ -73,4 +99,6 @@ hostnames/IPs in the cert, delete `data\cert.pem` and regenerate:
 - Session cookies are `https_only`.
 - Keep `data/` private — it holds the database, the TLS private key, and the
   session secret. Back up by copying `data\app.db`.
+- The SMTP password is stored in the local `data\app.db` (gitignored). Acceptable
+  for an internal LAN box; do not commit `data/` or expose it.
 - Restrict access with the Windows Firewall to your LAN subnet if needed.

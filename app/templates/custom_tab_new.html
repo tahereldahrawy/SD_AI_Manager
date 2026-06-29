@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}New custom tab{% endblock %}
+{% block content %}
+<h1>New custom tab</h1>
+<p class="muted">A custom tab shows a compact summary card for each section you pick.
+It appears in the left sidebar.</p>
+
+<div class="card narrow">
+    <form method="post" action="/tabs">
+        <label>Tab name <input name="name" placeholder="e.g. Overview" required></label>
+        <p class="muted">Include sections:</p>
+        {% for s in sections %}
+            <label class="check">
+                <input type="checkbox" name="section_{{ s.key }}" value="1"> {{ s.label }}
+            </label>
+        {% endfor %}
+        <button type="submit">Create tab</button>
+    </form>
+</div>
+{% endblock %}

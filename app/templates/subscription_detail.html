@@ -8,6 +8,11 @@
     <div class="stat"><span class="num">{{ sub.seats }}</span> Seats</div>
     <div class="stat"><span class="num">{{ consumed }}</span> Consumed</div>
     <div class="stat"><span class="num">{{ free }}</span> Free</div>
+    <div class="stat">
+        <span class="num">{% if sub.unit_cost is not none %}{{ fmt_money(charge, currency) }}{% else %}—{% endif %}</span>
+        Current charge
+        {% if sub.unit_cost is not none %}<span class="muted">{{ fmt_money(sub.unit_cost, currency) }} × {{ consumed }}</span>{% endif %}
+    </div>
 </div>
 
 <div class="card narrow">
@@ -19,6 +24,25 @@
         <button type="submit">Update</button>
     </form>
     <p class="muted">Cannot go below {{ consumed }} (already consumed).</p>
+</div>
+
+<div class="card narrow">
+    <h2>Pricing</h2>
+    <form method="post" action="/subscriptions/{{ sub.id }}/pricing">
+        <label>Unit cost / seat <span class="muted">(blank = none)</span>
+            <input name="unit_cost" type="number" step="0.01" min="0"
+                   value="{{ sub.unit_cost if sub.unit_cost is not none else '' }}">
+        </label>
+        <label>Currency
+            <select name="currency">
+                <option value="">— default ({{ currency }}) —</option>
+                {% for c in CURRENCIES %}
+                    <option value="{{ c }}" {{ 'selected' if sub.currency == c }}>{{ c }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        <button type="submit">Save pricing</button>
+    </form>
 </div>
 
 <div class="card narrow">
@@ -59,6 +83,52 @@
             </tr>
         {% else %}
             <tr><td colspan="3" class="muted">No users assigned.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Billing &amp; reminders</h2>
+    <form method="post" action="/invoices" class="inline-form">
+        <input type="hidden" name="subscription_id" value="{{ sub.id }}">
+        <input name="label" placeholder="Label e.g. June 2026" required>
+        <input name="due_date" type="date" title="Due date (optional)">
+        <input name="amount" type="number" step="0.01" min="0"
+               placeholder="Amount (blank = {{ fmt_money(charge, currency) }})">
+        <button type="submit">Add reminder</button>
+    </form>
+    <table>
+        <thead><tr><th>Label</th><th>Amount</th><th>Due</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        {% for i in invoices %}
+            <tr>
+                <td>{{ i.label }}</td>
+                <td>{{ fmt_money(i.amount, i.currency) }}</td>
+                <td class="{{ 'overdue' if i.status == 'due' and i.due_date and i.due_date < today }}">
+                    {{ i.due_date or '—' }}
+                </td>
+                <td>
+                    <span class="badge {{ 'ok' if i.status == 'paid' else 'full' }}">{{ i.status }}</span>
+                </td>
+                <td>
+                    {% if i.status == 'due' %}
+                    <form method="post" action="/invoices/{{ i.id }}/paid">
+                        <button type="submit">Mark paid</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/invoices/{{ i.id }}/due">
+                        <button type="submit">Reopen</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/invoices/{{ i.id }}/delete"
+                          onsubmit="return confirm('Delete this invoice?');">
+                        <button class="danger" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="5" class="muted">No invoices yet.</td></tr>
         {% endfor %}
         </tbody>
     </table>

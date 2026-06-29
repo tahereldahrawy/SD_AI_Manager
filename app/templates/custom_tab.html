@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ tab.name }}{% endblock %}
+{% block content %}
+<div class="row-between">
+    <h1>{{ tab.name }}</h1>
+    <form method="post" action="/tabs/{{ tab.id }}/delete"
+          onsubmit="return confirm('Delete custom tab {{ tab.name }}?');">
+        <button class="danger" type="submit">Delete tab</button>
+    </form>
+</div>
+
+<div class="summary-grid">
+    {% for c in cards %}
+        <a class="card summary-card" href="{{ c.url }}">
+            <h2>{{ c.label }}</h2>
+            {% for line in c.lines %}
+                <div class="sum-line">{{ line }}</div>
+            {% endfor %}
+            {% if not c.lines %}<div class="muted">No data</div>{% endif %}
+        </a>
+    {% endfor %}
+</div>
+{% endblock %}
