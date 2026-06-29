@@ -100,16 +100,28 @@ async def _audit(request: Request, call_next):
             user = None
         path = request.url.path
         action = _describe(request.method, path)
-        add_log(user, action, detail="", status=response.status_code)
+        # The route's own flash message is the human-readable "what happened"
+        # (e.g. "User 'Alice' created."). Peek it without consuming it.
+        detail = _latest_flash(request)
+        add_log(user, action, detail=detail, status=response.status_code)
         # Fire matching event notifications off the request path (SMTP may block).
         # Skip config churn (rule management, auth) so it never self-notifies.
         if response.status_code < 400 and not path.startswith(_NOTIFY_SKIP):
             threading.Thread(
                 target=core.fire_notifications,
-                args=(path, user, response.status_code, action),
+                args=(path, user, response.status_code, action, detail),
                 daemon=True,
             ).start()
     return response
+
+
+def _latest_flash(request: Request) -> str:
+    """Most recent flash message for this request, peeked (not consumed)."""
+    try:
+        fl = request.session.get("_flashes") or []
+        return fl[-1].get("message", "") if fl else ""
+    except Exception:
+        return ""
 
 
 # POST paths that should never trigger a notification (config/auth plumbing).

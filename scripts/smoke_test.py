@@ -286,9 +286,13 @@ check("catch-all matches a delete path", any(x["label"] == "All activity"
       for x in match_notifications("/users/5/delete")))
 sent = []
 core_mod._smtp_send = lambda s, msg: sent.append(msg)
-core_mod.fire_notifications("/users/5/delete", "admin", 303, "User: delete")
+core_mod.fire_notifications("/users/5/delete", "admin", 303, "User: delete",
+                            "User deleted (and any seat assignments freed).")
 check("catch-all fires email on delete", len(sent) >= 1)
 check("subject names the action", any("User: delete" in m["Subject"] for m in sent))
+check("body shows readable detail",
+      any("User deleted (and any seat assignments freed)." in m.get_content() for m in sent))
+check("body shows who performed it", any("admin" in m.get_content() for m in sent))
 check("de-dupe: one email per recipient", [m["To"] for m in sent].count("ops@corp.com") == 1)
 # undo test rules + SMTP so later POSTs in this suite don't fire notifications
 db.set_setting("smtp_host", "")

@@ -6,7 +6,8 @@ from datetime import date, timedelta
 from email.message import EmailMessage
 
 from .db import (
-    add_log, all_settings, enabled_notifications, get_conn, get_setting, today_iso,
+    add_log, all_settings, enabled_notifications, get_conn, get_setting, now_iso,
+    today_iso,
 )
 
 # System tabs in their natural order. section_key -> label/url.
@@ -287,11 +288,12 @@ def _smtp_send(s: dict, msg: EmailMessage) -> None:
         server.send_message(msg)
 
 
-def fire_notifications(path: str, account, status, action: str = "") -> None:
+def fire_notifications(path: str, account, status, action: str = "", detail: str = "") -> None:
     """Send an email for each enabled rule matching this POST path.
 
-    `action` is the friendly description of what happened (e.g. "User: delete");
-    it names the email so a single catch-all rule still produces meaningful subjects.
+    `action` is the action type (e.g. "User: delete") used as the subject.
+    `detail` is the route's human-readable result (e.g. "User 'Alice' created.")
+    and leads the body so the email says what actually happened.
 
     Runs in a daemon thread (SMTP can block / time out), so it must never raise.
     Skips silently when SMTP is unconfigured or no rule matches.
@@ -305,6 +307,13 @@ def fire_notifications(path: str, account, status, action: str = "") -> None:
             return
         sender = s.get("smtp_from") or s.get("smtp_user") or "noreply@localhost"
         what = action or (matched[0]["label"] if matched else path)
+        summary = detail or what
+        body = (
+            f"{summary}\n\n"
+            f"Action:       {what}\n"
+            f"Performed by: {account or 'unknown'}\n"
+            f"When:         {now_iso()} UTC\n"
+        )
         sent_to = set()  # de-dupe when several rules target the same recipient
         for r in matched:
             to = (r["recipient"] or "").strip() or s.get("reminder_to", "")
@@ -315,13 +324,7 @@ def fire_notifications(path: str, account, status, action: str = "") -> None:
             msg["Subject"] = f"[Subscription Manager] {what}"
             msg["From"] = sender
             msg["To"] = to
-            msg.set_content(
-                f"Activity: {what}\n"
-                f"Rule: {r['label']}\n"
-                f"By: {account or 'unknown'}\n"
-                f"Path: {path}\n"
-                f"Status: {status}\n"
-            )
+            msg.set_content(body)
             try:
                 _smtp_send(s, msg)
                 add_log(account, "Notification sent", f"{what} -> {to}", status)
