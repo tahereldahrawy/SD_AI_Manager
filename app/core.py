@@ -164,17 +164,61 @@ def _due_for_reminder(lead_days: int):
     return rows, today
 
 
-def build_reminder_body(rows, today) -> str:
-    lines = ["Subscription bills that need attention:\n"]
-    for r in rows:
-        when = r["due_date"] or "no date"
-        overdue = " (OVERDUE)" if r["due_date"] and r["due_date"] < today else ""
-        lines.append(
-            f"- {r['sub']}: {r['label']} — {fmt_money(r['amount'], r['currency'])} "
-            f"due {when}{overdue}"
-        )
-    lines.append("\nMark them paid in the Subscription Manager once settled.")
-    return "\n".join(lines)
+DEFAULT_SUBJECT_TPL = "Subscription bills due ({{count}})"
+DEFAULT_BODY_TPL = (
+    "Subscription bills that need attention:\n"
+    "{% for row in rows %}"
+    "- {{subscription}}: {{label}} — {{amount}} due {{due_date}} {{status}}\n"
+    "{% endfor %}"
+    "\nMark them paid in the Subscription Manager once settled."
+)
+
+# Variables exposed per invoice row in templates.
+_ROW_VAR_DOCS = [
+    ("{{subscription}}", "Subscription name"),
+    ("{{label}}", "Invoice label (e.g. June 2026)"),
+    ("{{amount}}", "Formatted amount with currency"),
+    ("{{due_date}}", "Due date or 'no date'"),
+    ("{{status}}", "'due' or 'OVERDUE'"),
+]
+# Subject-only extras.
+_SUBJECT_VAR_DOCS = [("{{count}}", "Number of due invoices")]
+
+ROW_VAR_DOCS = _ROW_VAR_DOCS
+SUBJECT_VAR_DOCS = _SUBJECT_VAR_DOCS + _ROW_VAR_DOCS
+
+
+def _render_tpl(tpl: str, mapping: dict) -> str:
+    """Replace {{key}} placeholders. Unknown keys left as-is (no KeyError)."""
+    import re
+    return re.sub(r"\{\{(\w+)\}\}", lambda m: str(mapping.get(m.group(1), m.group(0))), tpl)
+
+
+def _row_vars(r, today) -> dict:
+    overdue = r["due_date"] and r["due_date"] < today
+    return {
+        "subscription": r["sub"],
+        "label": r["label"],
+        "amount": fmt_money(r["amount"], r["currency"]),
+        "due_date": r["due_date"] or "no date",
+        "status": "OVERDUE" if overdue else "due",
+    }
+
+
+def build_reminder_body(rows, today, body_tpl: str | None = None) -> str:
+    tpl = (body_tpl or DEFAULT_BODY_TPL).strip()
+    # Split on {% for row in rows %} / {% endfor %} markers to repeat the row block.
+    import re
+    m = re.search(r"\{%\s*for row in rows\s*%\}(.*?)\{%\s*endfor\s*%\}", tpl, re.DOTALL)
+    if m:
+        prefix = tpl[:m.start()]
+        row_block = m.group(1)
+        suffix = tpl[m.end():]
+        rendered_rows = "".join(_render_tpl(row_block, _row_vars(r, today)) for r in rows)
+        return prefix + rendered_rows + suffix
+    # No loop markers: render once with vars from first row (simple subject-style use).
+    first = _row_vars(rows[0], today) if rows else {}
+    return _render_tpl(tpl, first)
 
 
 def send_reminders() -> tuple[bool, str]:
@@ -194,11 +238,16 @@ def send_reminders() -> tuple[bool, str]:
     if not rows:
         return True, "No due invoices within the reminder window — nothing to send."
 
+    subject_tpl = s.get("reminder_subject_tpl") or DEFAULT_SUBJECT_TPL
+    body_tpl = s.get("reminder_body_tpl") or None
+    first_vars = _row_vars(rows[0], today) if rows else {}
+    subject = _render_tpl(subject_tpl, {"count": len(rows), **first_vars})
+
     msg = EmailMessage()
-    msg["Subject"] = f"Subscription bills due ({len(rows)})"
+    msg["Subject"] = subject
     msg["From"] = s.get("smtp_from") or s.get("smtp_user") or "noreply@localhost"
     msg["To"] = to
-    msg.set_content(build_reminder_body(rows, today))
+    msg.set_content(build_reminder_body(rows, today, body_tpl))
 
     port = int(s.get("smtp_port") or "587")
     use_tls = (s.get("smtp_tls") or "1") == "1"

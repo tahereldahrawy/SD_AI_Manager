@@ -32,6 +32,28 @@
     </div>
 
     <div class="card narrow">
+        <h2>Reminder email template</h2>
+        <p class="muted">Leave blank to use the built-in default. Use <code>{{variable}}</code> placeholders.</p>
+        <label>Subject
+            <input name="reminder_subject_tpl"
+                   value="{{ s.get('reminder_subject_tpl', '') }}"
+                   placeholder="{{ default_subject_tpl }}">
+        </label>
+        <p class="muted" style="margin-top:2px">
+            Subject variables:
+            {% for var, desc in subject_var_docs %}<code>{{ var }}</code> {{ desc }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+        <label>Body
+            <textarea name="reminder_body_tpl" rows="8" style="font-family:monospace;width:100%"
+                      placeholder="{{ default_body_tpl }}">{{ s.get('reminder_body_tpl', '') }}</textarea>
+        </label>
+        <p class="muted" style="margin-top:2px">
+            Row variables (inside <code>{% raw %}{% for row in rows %}…{% endfor %}{% endraw %}</code>):
+            {% for var, desc in row_var_docs %}<code>{{ var }}</code> {{ desc }}{% if not loop.last %}, {% endif %}{% endfor %}
+        </p>
+    </div>
+
+    <div class="card narrow">
         <h2>Sidebar</h2>
         <p class="muted">Show/hide and reorder the system tabs (lower number = higher).</p>
         <table>

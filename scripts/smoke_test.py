@@ -222,6 +222,19 @@ check("export invoices csv", r.status_code == 200 and b"June 2026" in r.content)
 r = c.get("/export?kind=all&fmt=xlsx")
 check("export all still works", r.status_code == 200 and r.content[:2] == b"PK")
 
+# reminder template rendering
+from app.core import build_reminder_body, _render_tpl  # noqa: E402
+fake_rows = [type("R", (), {"__getitem__": lambda s, k: {"sub": "Acme", "label": "Jul 2026",
+    "amount": 25.0, "currency": "USD", "due_date": "2026-07-01"}[k]})()]
+body = build_reminder_body(fake_rows, "2026-06-01")
+check("default body contains subscription name", "Acme" in body)
+check("default body contains amount", "25.00 USD" in body)
+custom_tpl = "Hey! {{subscription}} owes {{amount}} by {{due_date}}"
+body2 = build_reminder_body(fake_rows, "2026-06-01", custom_tpl)
+check("custom body template renders vars", "Acme owes 25.00 USD by 2026-07-01" in body2)
+subj = _render_tpl("Bills due ({{count}}) for {{subscription}}", {"count": 3, "subscription": "Acme"})
+check("subject template renders count + var", subj == "Bills due (3) for Acme")
+
 # settings: change default currency + hide a sidebar tab
 r = c.post("/settings", data={
     "default_currency": "EUR", "smtp_port": "587", "reminder_lead_days": "7",

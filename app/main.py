@@ -692,6 +692,7 @@ def delete_tab(request: Request, tab_id: int, _: int = Depends(login_required)):
 SETTING_KEYS = [
     "default_currency", "smtp_host", "smtp_port", "smtp_user", "smtp_password",
     "smtp_from", "smtp_tls", "reminder_to", "reminder_lead_days",
+    "reminder_subject_tpl", "reminder_body_tpl",
 ]
 
 
@@ -710,7 +711,11 @@ def settings_page(request: Request, _: int = Depends(login_required)):
     sidebar.sort(key=lambda x: x["order"])
     return templates.TemplateResponse(
         request, "settings.html",
-        ctx(request, s=s, sidebar=sidebar, default_currency=core.default_currency()),
+        ctx(request, s=s, sidebar=sidebar, default_currency=core.default_currency(),
+            default_subject_tpl=core.DEFAULT_SUBJECT_TPL,
+            default_body_tpl=core.DEFAULT_BODY_TPL,
+            row_var_docs=core.ROW_VAR_DOCS,
+            subject_var_docs=core.SUBJECT_VAR_DOCS),
     )
 
 
