@@ -27,13 +27,13 @@ def _fetch(kind: str):
         if kind == "subscriptions":
             rows = conn.execute(
                 """
-                SELECT s.id, s.name, s.seats, s.unit_cost, s.currency,
+                SELECT s.id, s.name, s.seats, s.unit_cost, s.currency, s.daily_basis,
                        (SELECT COUNT(*) FROM assignments a WHERE a.subscription_id = s.id) AS consumed,
                        s.created_at
                 FROM subscriptions s ORDER BY s.id
                 """
             ).fetchall()
-            headers = ["id", "name", "seats", "unit_cost", "currency",
+            headers = ["id", "name", "seats", "unit_cost", "currency", "daily_basis",
                        "seats_consumed", "created_at"]
             return headers, [tuple(r) for r in rows]
 

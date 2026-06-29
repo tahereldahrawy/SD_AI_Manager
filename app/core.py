@@ -1,5 +1,6 @@
 """Shared helpers: sidebar model, currencies, section summaries, email reminders."""
 import smtplib
+from calendar import monthrange
 from datetime import date, timedelta
 from email.message import EmailMessage
 
@@ -29,6 +30,41 @@ def default_currency() -> str:
 def fmt_money(amount, currency=None) -> str:
     cur = currency or default_currency()
     return f"{amount:,.2f} {cur}"
+
+
+def compute_charge(unit_cost, consumed, daily_basis=False, next_due=None, today=None):
+    """Current charge for a subscription.
+
+    Normal: unit_cost x seats consumed (per period).
+    Daily basis: prorate from today to the next due date, using a daily rate of
+    unit_cost / (days in the current month). Falls back to the full per-period
+    charge when there is no upcoming due date.
+    """
+    base = (unit_cost or 0) * consumed
+    if not daily_basis or not next_due:
+        return base
+    try:
+        d_today = date.fromisoformat(today or today_iso())
+        d_due = date.fromisoformat(next_due)
+    except (TypeError, ValueError):
+        return base
+    days = (d_due - d_today).days
+    if days <= 0:
+        return base
+    period = monthrange(d_today.year, d_today.month)[1]
+    daily = (unit_cost or 0) / period
+    return daily * days * consumed
+
+
+def next_due_date(conn, subscription_id, today=None):
+    """Nearest upcoming due date for a subscription's still-due invoices, or None."""
+    row = conn.execute(
+        "SELECT MIN(due_date) FROM invoices "
+        "WHERE subscription_id = ? AND status = 'due' "
+        "AND due_date IS NOT NULL AND due_date >= ?",
+        (subscription_id, today or today_iso()),
+    ).fetchone()
+    return row[0] if row else None
 
 
 # --- sidebar (system order/visibility + custom tabs) ------------------------

@@ -11,7 +11,15 @@
     <div class="stat">
         <span class="num">{% if sub.unit_cost is not none %}{{ fmt_money(charge, currency) }}{% else %}—{% endif %}</span>
         Current charge
-        {% if sub.unit_cost is not none %}<span class="muted">{{ fmt_money(sub.unit_cost, currency) }} × {{ consumed }}</span>{% endif %}
+        {% if sub.unit_cost is not none %}
+            {% if daily_basis and next_due %}
+                <span class="muted">prorated to {{ next_due }}</span>
+            {% elif daily_basis %}
+                <span class="muted">{{ fmt_money(sub.unit_cost, currency) }} × {{ consumed }} (no upcoming due date)</span>
+            {% else %}
+                <span class="muted">{{ fmt_money(sub.unit_cost, currency) }} × {{ consumed }}</span>
+            {% endif %}
+        {% endif %}
     </div>
 </div>
 
@@ -41,6 +49,8 @@
                 {% endfor %}
             </select>
         </label>
+        <label class="check"><input type="checkbox" name="daily_basis" value="1" {{ 'checked' if daily_basis }}>
+            Daily basis <span class="muted">(prorate from today to next due date)</span></label>
         <button type="submit">Save pricing</button>
     </form>
 </div>

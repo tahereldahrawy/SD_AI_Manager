@@ -17,6 +17,8 @@
                 {% for c in CURRENCIES %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
             </select>
         </label>
+        <label class="check"><input type="checkbox" name="daily_basis" value="1">
+            Daily basis <span class="muted">(prorate cost from today to next due date)</span></label>
         <button type="submit">Create</button>
     </form>
 </div>
@@ -35,7 +37,7 @@
                         {{ s.consumed }} / {{ s.seats }}
                     </span>
                 </td>
-                <td>{% if s.unit_cost is not none %}{{ fmt_money(s.unit_cost, s.currency) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+                <td>{% if s.unit_cost is not none %}{{ fmt_money(s.unit_cost, s.currency) }}{% if s.daily_basis %} <span class="badge ok">daily</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
                 <td class="muted">{{ s.created_at }}</td>
                 <td>
                     <a href="/subscriptions/{{ s.id }}">Manage</a>

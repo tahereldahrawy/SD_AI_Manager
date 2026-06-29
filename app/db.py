@@ -90,6 +90,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE subscriptions ADD COLUMN unit_cost REAL")
     if "currency" not in cols:
         conn.execute("ALTER TABLE subscriptions ADD COLUMN currency TEXT")
+    if "daily_basis" not in cols:
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN daily_basis INTEGER NOT NULL DEFAULT 0")
 
 
 def init_db() -> None:

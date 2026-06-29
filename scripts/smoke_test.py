@@ -152,6 +152,19 @@ check("set pricing ok", "Pricing updated" in r.text)
 r = c.get(f"/subscriptions/{sub_id}")
 check("current charge computed (10 x 2)", "20.00 USD" in r.text)
 
+# daily-basis proration math (deterministic; user example: $25, 10 days, June -> 8.33)
+from app.core import compute_charge  # noqa: E402
+check("daily proration 25/30*10 = 8.33",
+      round(compute_charge(25, 1, True, "2026-06-11", "2026-06-01"), 2) == 8.33)
+check("daily proration scales with seats",
+      round(compute_charge(25, 2, True, "2026-06-11", "2026-06-01"), 2) == 16.67)
+check("non-daily ignores due date (full charge)",
+      compute_charge(25, 1, False, "2026-06-11", "2026-06-01") == 25)
+check("daily with no upcoming due -> full charge",
+      compute_charge(25, 1, True, None, "2026-06-01") == 25)
+check("daily past-due date -> full charge",
+      compute_charge(25, 1, True, "2026-05-01", "2026-06-01") == 25)
+
 # create invoice with blank amount -> defaults to current charge (20.00)
 r = c.post("/invoices",
            data={"subscription_id": sub_id, "label": "June 2026", "due_date": "2020-01-01", "amount": ""},

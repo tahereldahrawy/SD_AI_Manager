@@ -12,6 +12,10 @@ FastAPI + SQLite + server-rendered HTML. Runs over HTTPS on a LAN.
   - Cannot assign past the seat limit.
   - Cannot shrink seats below the number already consumed.
   - Current charge = `unit_cost × seats consumed`, shown live on the subscription.
+  - **Daily basis** (optional tick): prorate the charge from today to the next due
+    date — `unit_cost / days-in-month × days-remaining × seats`. e.g. a $25 sub with
+    10 days left in the cycle charges ≈ $8.33. Falls back to the full charge when no
+    upcoming due date exists.
 - **Billing & reminders** — create invoices per subscription (amount pre-fills from
   the current charge). Each is **due** until ticked **paid**. Overdue dates are
   flagged; the sidebar shows a due-count badge. Optional **email reminders** via SMTP.

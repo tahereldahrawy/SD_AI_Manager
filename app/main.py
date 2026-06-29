@@ -163,7 +163,7 @@ def subs_page(request: Request, _: int = Depends(login_required)):
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT s.id, s.name, s.seats, s.unit_cost, s.currency, s.created_at,
+            SELECT s.id, s.name, s.seats, s.unit_cost, s.currency, s.daily_basis, s.created_at,
                    (SELECT COUNT(*) FROM assignments a WHERE a.subscription_id = s.id) AS consumed
             FROM subscriptions s ORDER BY s.name
             """
@@ -197,6 +197,7 @@ def create_subscription(
     seats: int = Form(...),
     unit_cost: str = Form(""),
     currency: str = Form(""),
+    daily_basis: str = Form(""),
     _: int = Depends(login_required),
 ):
     name = name.strip()
@@ -218,9 +219,9 @@ def create_subscription(
             flash(request, f"Subscription '{name}' already exists.", "error")
             return RedirectResponse("/subscriptions", status_code=303)
         conn.execute(
-            "INSERT INTO subscriptions (name, seats, unit_cost, currency, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (name, seats, cost, _clean_currency(currency), now_iso()),
+            "INSERT INTO subscriptions (name, seats, unit_cost, currency, daily_basis, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, seats, cost, _clean_currency(currency), 1 if daily_basis else 0, now_iso()),
         )
     flash(request, f"Subscription '{name}' created with {seats} seats.", "success")
     return RedirectResponse("/subscriptions", status_code=303)
@@ -232,6 +233,7 @@ def edit_pricing(
     sub_id: int,
     unit_cost: str = Form(""),
     currency: str = Form(""),
+    daily_basis: str = Form(""),
     _: int = Depends(login_required),
 ):
     cost, err = _parse_cost(unit_cost)
@@ -240,8 +242,8 @@ def edit_pricing(
     else:
         with get_conn() as conn:
             conn.execute(
-                "UPDATE subscriptions SET unit_cost = ?, currency = ? WHERE id = ?",
-                (cost, _clean_currency(currency), sub_id),
+                "UPDATE subscriptions SET unit_cost = ?, currency = ?, daily_basis = ? WHERE id = ?",
+                (cost, _clean_currency(currency), 1 if daily_basis else 0, sub_id),
             )
         flash(request, "Pricing updated.", "success")
     return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
@@ -287,15 +289,19 @@ def sub_detail(request: Request, sub_id: int, _: int = Depends(login_required)):
             (sub_id,),
         ).fetchall()
     consumed = len(assigned)
-    charge = (sub["unit_cost"] or 0) * consumed
+    today = today_iso()
+    daily = bool(sub["daily_basis"])
+    with get_conn() as conn:
+        nd = core.next_due_date(conn, sub_id, today)
+    charge = core.compute_charge(sub["unit_cost"], consumed, daily, nd, today)
     return templates.TemplateResponse(
         request,
         "subscription_detail.html",
         ctx(request, sub=sub, assigned=assigned, available=available,
             consumed=consumed, free=sub["seats"] - consumed,
-            invoices=invoices, charge=charge,
+            invoices=invoices, charge=charge, daily_basis=daily, next_due=nd,
             currency=sub["currency"] or core.default_currency(),
-            today=today_iso()),
+            today=today),
     )
 
 
@@ -538,7 +544,10 @@ def create_invoice(
                 "SELECT COUNT(*) FROM assignments WHERE subscription_id = ?",
                 (subscription_id,),
             ).fetchone()[0]
-            amt = (sub["unit_cost"] or 0) * consumed
+            amt = core.compute_charge(
+                sub["unit_cost"], consumed, bool(sub["daily_basis"]),
+                due_date.strip() or None, today_iso(),
+            )
         conn.execute(
             "INSERT INTO invoices (subscription_id, label, amount, currency, "
             "due_date, status, created_at) VALUES (?, ?, ?, ?, ?, 'due', ?)",
