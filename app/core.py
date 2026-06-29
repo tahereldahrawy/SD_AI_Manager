@@ -13,6 +13,7 @@ SYSTEM_SECTIONS = [
     {"key": "subscriptions", "label": "Subscriptions", "url": "/subscriptions"},
     {"key": "invoices", "label": "Billing", "url": "/invoices"},
     {"key": "accounts", "label": "Accounts", "url": "/accounts"},
+    {"key": "logs", "label": "System Log", "url": "/logs"},
     {"key": "settings", "label": "Settings", "url": "/settings"},
 ]
 SECTION_BY_KEY = {s["key"]: s for s in SYSTEM_SECTIONS}

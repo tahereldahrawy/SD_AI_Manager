@@ -248,5 +248,23 @@ check("default currency now EUR", 'value="EUR" selected' in r.text or "EUR</opti
 r = c.get("/")
 check("hidden tab removed from sidebar", 'href="/accounts"' not in r.text)
 
+# --- system log (audit middleware + view + export + clear) ---
+r = c.get("/logs")
+check("system log lists POST actions", "Create user" in r.text or "Create subscription" in r.text)
+check("system log records the account", "tester" in r.text)
+with db.get_conn() as conn:
+    before = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+check("audit middleware logged something", before > 0)
+# export logs
+r = c.get("/export?kind=logs&fmt=csv")
+check("export logs csv", r.status_code == 200 and b"action" in r.content)
+# clear logs (the clear action itself is then logged by the middleware -> exactly 1 remains)
+r = c.post("/logs/clear", follow_redirects=True)
+check("clear logs ok", "cleared" in r.text.lower())
+with db.get_conn() as conn:
+    after = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+    act = conn.execute("SELECT action FROM logs").fetchone()
+check("logs cleared, only the clear action remains", after == 1 and act[0] == "Clear system log")
+
 print(f"\n{ok} passed, {fail} failed")
 sys.exit(1 if fail else 0)

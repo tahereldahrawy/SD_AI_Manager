@@ -64,6 +64,15 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS logs (
+    id      INTEGER PRIMARY KEY,
+    ts      TEXT NOT NULL,
+    account TEXT,
+    action  TEXT NOT NULL,
+    detail  TEXT,
+    status  INTEGER
+);
 """
 
 
@@ -114,6 +123,24 @@ def set_setting(key: str, value: str) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+
+def add_log(account, action: str, detail: str = "", status=None) -> None:
+    """Record one action in the system log. Never raises (audit must not break a request)."""
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO logs (ts, account, action, detail, status) VALUES (?, ?, ?, ?, ?)",
+                (now_iso(), account, action, detail, status),
+            )
+    except Exception:
+        pass
+
+
+def clear_logs() -> int:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM logs")
+        return cur.rowcount
 
 
 def all_settings() -> dict:

@@ -12,7 +12,7 @@ from openpyxl import Workbook
 from .db import get_conn
 
 # (header row, list-of-tuples) per dataset, computed on demand.
-DATASETS = ("users", "subscriptions", "assignments", "invoices")
+DATASETS = ("users", "subscriptions", "assignments", "invoices", "logs")
 
 
 def _fetch(kind: str):
@@ -62,6 +62,13 @@ def _fetch(kind: str):
                 """
             ).fetchall()
             headers = ["subscription_id", "subscription", "user_id", "user", "email", "created_at"]
+            return headers, [tuple(r) for r in rows]
+
+        if kind == "logs":
+            rows = conn.execute(
+                "SELECT id, ts, account, action, detail, status FROM logs ORDER BY id"
+            ).fetchall()
+            headers = ["id", "ts", "account", "action", "detail", "status"]
             return headers, [tuple(r) for r in rows]
 
     raise ValueError(f"unknown dataset: {kind}")

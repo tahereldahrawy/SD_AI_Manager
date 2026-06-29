@@ -1,4 +1,5 @@
 """FastAPI app: GUI + validation for users / subscriptions / seats, plus export."""
+import asyncio
 import secrets
 from pathlib import Path
 
@@ -11,8 +12,36 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__, core, export
 from .auth import authenticate, hash_password
 from .db import (
-    all_settings, get_conn, get_setting, init_db, now_iso, set_setting, today_iso,
+    add_log, all_settings, clear_logs, get_conn, get_setting, init_db, now_iso,
+    set_setting, today_iso,
 )
+
+# Human-readable labels for audited POST paths (longest match wins for {id} routes).
+_ACTION_LABELS = {
+    "/login": "Sign in",
+    "/users": "Create user",
+    "/subscriptions": "Create subscription",
+    "/accounts": "Create account",
+    "/invoices": "Create invoice",
+    "/reminders/send": "Send reminder email",
+    "/tabs": "Create custom tab",
+    "/settings": "Update settings",
+    "/logs/clear": "Clear system log",
+}
+
+
+def _describe(method: str, path: str) -> str:
+    """Friendly action label for a POST path; falls back to a verb derived from the suffix."""
+    if path in _ACTION_LABELS:
+        return _ACTION_LABELS[path]
+    # /subscriptions/3/pricing -> "Subscription: pricing", /invoices/5/paid -> "Invoice: paid"
+    parts = [p for p in path.split("/") if p]
+    if len(parts) >= 3 and parts[1].isdigit():
+        section = parts[0].rstrip("s").capitalize()
+        return f"{section}: {parts[2]}"
+    if len(parts) == 3 and parts[2] in ("delete", "update"):
+        return f"{parts[0].rstrip('s').capitalize()}: {parts[2]}"
+    return f"{method} {path}"
 
 BASE = Path(__file__).resolve().parent
 DATA_DIR = BASE.parent / "data"
@@ -39,6 +68,37 @@ app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 @app.on_event("startup")
 def _startup():
     init_db()
+
+
+@app.on_event("startup")
+async def _silence_proactor_reset():
+    """Windows ProactorEventLoop logs a harmless ConnectionResetError (WinError 10054)
+    when a client drops the connection abruptly (reload, tab close, cert warning).
+    Swallow only that case; everything else logs as normal."""
+    loop = asyncio.get_running_loop()
+    default = loop.get_exception_handler()
+
+    def handler(loop, context):
+        if isinstance(context.get("exception"), ConnectionResetError):
+            return
+        (default or loop.default_exception_handler)(context)
+
+    loop.set_exception_handler(handler)
+
+
+@app.middleware("http")
+async def _audit(request: Request, call_next):
+    """Log every mutating request (POST) to the system log after it completes.
+    Runs outside SessionMiddleware, so the session is populated by the time we read it."""
+    response = await call_next(request)
+    if request.method == "POST":
+        try:
+            user = request.session.get("username")
+        except Exception:
+            user = None
+        add_log(user, _describe(request.method, request.url.path),
+                detail="", status=response.status_code)
+    return response
 
 
 # --- auth plumbing ----------------------------------------------------------
@@ -747,6 +807,26 @@ async def settings_save(request: Request, _: int = Depends(login_required)):
     return RedirectResponse("/settings", status_code=303)
 
 
+# --- system log -------------------------------------------------------------
+@app.get("/logs")
+def logs_page(request: Request, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM logs ORDER BY id DESC LIMIT 500"
+        ).fetchall()
+        total = conn.execute("SELECT COUNT(*) FROM logs").fetchone()[0]
+    return templates.TemplateResponse(
+        request, "logs.html", ctx(request, logs=rows, total=total, shown=len(rows)),
+    )
+
+
+@app.post("/logs/clear")
+def logs_clear(request: Request, _: int = Depends(login_required)):
+    n = clear_logs()
+    flash(request, f"System log cleared ({n} entries removed).", "success")
+    return RedirectResponse("/logs", status_code=303)
+
+
 # --- export -----------------------------------------------------------------
 @app.get("/export")
 def export_data(
@@ -755,7 +835,7 @@ def export_data(
     fmt: str = "xlsx",
     _: int = Depends(login_required),
 ):
-    if kind not in ("users", "subscriptions", "assignments", "invoices", "all"):
+    if kind not in ("users", "subscriptions", "assignments", "invoices", "logs", "all"):
         flash(request, "Unknown export kind.", "error")
         return RedirectResponse("/", status_code=303)
     if fmt == "csv":

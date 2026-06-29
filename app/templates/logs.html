@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}System Log{% endblock %}
+{% block content %}
+<h1>System Log</h1>
+
+<div class="card">
+    <div class="row-between">
+        <p class="muted" style="margin:0">
+            {{ total }} total{% if shown < total %}, showing latest {{ shown }}{% endif %}.
+        </p>
+        <div class="filters">
+            <a href="/export?kind=logs&fmt=csv">Export CSV</a>
+            <a href="/export?kind=logs&fmt=xlsx">Export Excel</a>
+            <form method="post" action="/logs/clear"
+                  onsubmit="return confirm('Clear the entire system log? This cannot be undone.');">
+                <button class="danger" type="submit">Clear logs</button>
+            </form>
+        </div>
+    </div>
+    <table>
+        <thead><tr><th>Time (UTC)</th><th>Account</th><th>Action</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for l in logs %}
+            <tr>
+                <td class="muted">{{ l.ts }}</td>
+                <td>{{ l.account or '—' }}</td>
+                <td>{{ l.action }}</td>
+                <td>
+                    <span class="badge {{ 'ok' if l.status and l.status < 400 else 'full' }}">{{ l.status or '—' }}</span>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="4" class="muted">No log entries yet.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
