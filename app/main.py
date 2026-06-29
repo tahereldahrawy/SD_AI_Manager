@@ -249,6 +249,29 @@ def edit_pricing(
     return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
 
 
+@app.post("/subscriptions/{sub_id}/rename")
+def rename_subscription(
+    request: Request,
+    sub_id: int,
+    name: str = Form(...),
+    _: int = Depends(login_required),
+):
+    name = name.strip()
+    if not name:
+        flash(request, "Name cannot be empty.", "error")
+        return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
+    with get_conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM subscriptions WHERE name = ? AND id != ?", (name, sub_id)
+        ).fetchone()
+        if exists:
+            flash(request, f"Subscription '{name}' already exists.", "error")
+            return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
+        conn.execute("UPDATE subscriptions SET name = ? WHERE id = ?", (name, sub_id))
+    flash(request, "Subscription renamed.", "success")
+    return RedirectResponse(f"/subscriptions/{sub_id}", status_code=303)
+
+
 @app.post("/subscriptions/{sub_id}/delete")
 def delete_subscription(request: Request, sub_id: int, _: int = Depends(login_required)):
     with get_conn() as conn:

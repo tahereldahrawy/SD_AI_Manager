@@ -4,6 +4,14 @@
 <p><a href="/subscriptions">&larr; Subscriptions</a></p>
 <h1>{{ sub.name }}</h1>
 
+<div class="card narrow">
+    <h2>Rename</h2>
+    <form method="post" action="/subscriptions/{{ sub.id }}/rename" class="inline-form">
+        <input name="name" value="{{ sub.name }}" required style="flex:1">
+        <button type="submit">Save</button>
+    </form>
+</div>
+
 <div class="stats">
     <div class="stat"><span class="num">{{ sub.seats }}</span> Seats</div>
     <div class="stat"><span class="num">{{ consumed }}</span> Consumed</div>

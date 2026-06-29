@@ -144,6 +144,18 @@ check("last-account-delete blocked",
       ("cannot delete the last account" in r.text.lower())
       or ("cannot delete the account you are logged in as" in r.text.lower()))
 
+# rename subscription
+r = c.post(f"/subscriptions/{sub_id}/rename", data={"name": "Pro Plan Renamed"}, follow_redirects=True)
+check("rename subscription ok", "Pro Plan Renamed" in r.text)
+r = c.post(f"/subscriptions/{sub_id}/rename", data={"name": "Pro Plan Renamed"}, follow_redirects=True)
+check("rename to same name ok (no duplicate)", "already exists" not in r.text)
+# create second sub to test duplicate rejection
+c.post("/subscriptions", data={"name": "Other Plan", "seats": "1"})
+r = c.post(f"/subscriptions/{sub_id}/rename", data={"name": "Other Plan"}, follow_redirects=True)
+check("rename to existing name blocked", "already exists" in r.text)
+# restore original name for rest of tests
+c.post(f"/subscriptions/{sub_id}/rename", data={"name": "Pro Plan"})
+
 # --- v2: cost, invoices, custom tabs, reminders, settings ---
 # set per-seat pricing on Pro Plan (2 users assigned -> charge 20.00 USD)
 r = c.post(f"/subscriptions/{sub_id}/pricing",
