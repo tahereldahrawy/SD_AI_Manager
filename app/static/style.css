@@ -67,6 +67,7 @@ body {
 .side-foot a:hover { color: var(--accent); }
 main { flex: 1; max-width: 960px; margin: 0 auto; padding: 28px 24px; width: 100%; }
 main.centered { display: flex; flex-direction: column; justify-content: center; min-height: 100vh; max-width: 460px; }
+footer.app-version { margin-top: 32px; padding-top: 16px; text-align: center; color: var(--muted); font-size: 0.8rem; opacity: 0.7; }
 h1 { margin: 8px 0 20px; }
 h2 { margin: 0 0 12px; font-size: 1.05rem; }
 .muted { color: var(--muted); font-size: 0.9rem; }

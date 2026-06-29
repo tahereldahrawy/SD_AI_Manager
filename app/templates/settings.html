@@ -31,25 +31,21 @@
         </label>
     </div>
 
-    <div class="card narrow">
+    <div class="card narrow" id="tpl-card">
         <h2>Reminder email template</h2>
-        <p class="muted">Leave blank to use the built-in default. Use <code>{{variable}}</code> placeholders.</p>
+        <p class="muted">Leave blank to use the built-in default. Click a field (or type <code>&#123;&#123;</code>) to pick a variable.</p>
         <label>Subject
-            <input name="reminder_subject_tpl"
-                   value="{{ s.get('reminder_subject_tpl', '') }}"
-                   placeholder="{{ default_subject_tpl }}">
+            <input name="reminder_subject_tpl" id="tpl-subject"
+                   data-vars="count|Number of due invoices;;subscription|Subscription name;;label|Invoice label;;amount|Formatted amount with currency;;due_date|Due date or 'no date';;status|'due' or 'OVERDUE'"
+                   value="{{ s.get('reminder_subject_tpl', '') }}">
         </label>
-        <p class="muted" style="margin-top:2px">
-            Subject variables:
-            {% for var, desc in subject_var_docs %}<code>{{ var }}</code> {{ desc }}{% if not loop.last %}, {% endif %}{% endfor %}
-        </p>
         <label>Body
-            <textarea name="reminder_body_tpl" rows="8" style="font-family:monospace;width:100%"
-                      placeholder="{{ default_body_tpl }}">{{ s.get('reminder_body_tpl', '') }}</textarea>
+            <textarea name="reminder_body_tpl" id="tpl-body" rows="8" style="font-family:monospace;width:100%"
+                      data-vars="subscription|Subscription name;;label|Invoice label;;amount|Formatted amount with currency;;due_date|Due date or 'no date';;status|'due' or 'OVERDUE'"
+            >{{ s.get('reminder_body_tpl', '') }}</textarea>
         </label>
-        <p class="muted" style="margin-top:2px">
-            Row variables (inside <code>{% raw %}{% for row in rows %}…{% endfor %}{% endraw %}</code>):
-            {% for var, desc in row_var_docs %}<code>{{ var }}</code> {{ desc }}{% if not loop.last %}, {% endif %}{% endfor %}
+        <p class="muted" style="margin-top:6px">
+            Body supports a <code>&#123;% for row in rows %&#125;...&#123;% endfor %&#125;</code> loop. Row variables only work inside it.
         </p>
     </div>
 
@@ -72,4 +68,99 @@
 
     <button type="submit">Save settings</button>
 </form>
+
+<script>
+{% raw %}
+document.addEventListener('DOMContentLoaded', function () {
+    // Create popup at body level so no parent CSS can hide/clip it.
+    var pop = document.createElement('div');
+    pop.id = 'ac-popup';
+    pop.setAttribute('style',
+        'display:none;position:fixed;background:#fff;color:#222;' +
+        'border:1px solid #888;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.25);' +
+        'z-index:99999;min-width:240px;max-height:240px;overflow-y:auto;padding:4px 0;' +
+        'font-family:sans-serif;font-size:14px');
+    document.body.appendChild(pop);
+
+    var activeEl = null;
+    var fields = document.querySelectorAll('[data-vars]');
+    console.log('[tpl-autocomplete] found', fields.length, 'data-vars fields');
+
+    function parseVars(el) {
+        var raw = el.getAttribute('data-vars') || '';
+        return raw.split(';;').filter(Boolean).map(function (p) {
+            var parts = p.split('|');
+            return { v: '{{' + parts[0] + '}}', d: parts[1] || '' };
+        });
+    }
+
+    var replStart = 0, replEnd = 0;
+
+    function hide() { pop.style.display = 'none'; activeEl = null; }
+
+    function insert(varStr) {
+        if (!activeEl) return;
+        var s = activeEl.value;
+        activeEl.value = s.slice(0, replStart) + varStr + s.slice(replEnd);
+        var cur = replStart + varStr.length;
+        activeEl.focus();
+        activeEl.setSelectionRange(cur, cur);
+        hide();
+    }
+
+    function show(el, query, start, end) {
+        var q = query.toLowerCase();
+        var matches = parseVars(el).filter(function (x) { return x.v.toLowerCase().indexOf(q) !== -1; });
+        if (!matches.length) { hide(); return; }
+        pop.innerHTML = '';
+        matches.forEach(function (x) {
+            var row = document.createElement('div');
+            row.setAttribute('style', 'padding:6px 12px;cursor:pointer;display:flex;gap:8px;align-items:baseline');
+            row.innerHTML = '<code style="flex-shrink:0;background:#f3f3f3;padding:1px 5px;border-radius:3px">' +
+                            x.v + '</code><span style="font-size:.85em;color:#666">' + x.d + '</span>';
+            row.onmouseenter = function () { row.style.background = '#e8f0fe'; };
+            row.onmouseleave = function () { row.style.background = ''; };
+            row.onmousedown = function (e) { e.preventDefault(); insert(x.v); };
+            pop.appendChild(row);
+        });
+        var r = el.getBoundingClientRect();
+        pop.style.left = r.left + 'px';
+        pop.style.top = (r.bottom + 4) + 'px';
+        pop.style.display = 'block';
+        activeEl = el;
+        replStart = start;
+        replEnd = end;
+    }
+
+    // Typing: only pop when inside an unclosed {{ ... }}; insert replaces the {{frag.
+    function onInput(el) {
+        var pos = el.selectionStart;
+        var text = el.value.slice(0, pos);
+        var last = text.lastIndexOf('{{');
+        if (last !== -1) {
+            var query = text.slice(last + 2);
+            if (query.indexOf('}}') === -1) { show(el, query, last, pos); return; }
+        }
+        hide();
+    }
+
+    fields.forEach(function (el) {
+        // Focus / click: show the full list so it can't be "invisible". Insert at caret.
+        function showAll() { var p = el.selectionStart; show(el, '', p, p); }
+        el.addEventListener('focus', showAll);
+        el.addEventListener('click', showAll);
+        el.addEventListener('input', function () { onInput(el); });
+        el.addEventListener('keyup', function () { onInput(el); });
+        el.addEventListener('keydown', function (e) {
+            if (pop.style.display !== 'none' && e.key === 'Escape') hide();
+        });
+        el.addEventListener('blur', function () { setTimeout(hide, 200); });
+    });
+
+    document.addEventListener('mousedown', function (e) {
+        if (!pop.contains(e.target) && e.target !== activeEl) hide();
+    });
+});
+{% endraw %}
+</script>
 {% endblock %}

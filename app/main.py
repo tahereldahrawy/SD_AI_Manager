@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import core, export
+from . import __version__, core, export
 from .auth import authenticate, hash_password
 from .db import (
     all_settings, get_conn, get_setting, init_db, now_iso, set_setting, today_iso,
@@ -19,6 +19,7 @@ DATA_DIR = BASE.parent / "data"
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 templates.env.globals["fmt_money"] = core.fmt_money
 templates.env.globals["CURRENCIES"] = core.CURRENCIES
+templates.env.globals["app_version"] = __version__
 
 
 def _secret_key() -> str:
