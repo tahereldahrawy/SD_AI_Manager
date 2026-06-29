@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<h1>Email Notifications</h1>
+
+{% if not smtp_ready %}
+<div class="flash error">
+    SMTP is not configured. Rules will not send until you set the SMTP host and a
+    default recipient on the <a href="/settings">Settings</a> page.
+</div>
+{% endif %}
+
+<div class="card narrow">
+    <h2>Add notification</h2>
+    <p class="muted">A rule fires an email whenever an action matches its path pattern.
+        Use <code>*</code> as a wildcard (e.g. <code>/invoices/*/paid</code>).</p>
+    <form method="post" action="/notifications">
+        <label>Label <input name="label" placeholder="e.g. Bill paid" required></label>
+        <label>Path pattern
+            <input name="match_path" list="post-paths" placeholder="/invoices/*/paid" required>
+        </label>
+        <datalist id="post-paths">
+            {% for p in paths %}<option value="{{ p }}">{% endfor %}
+        </datalist>
+        <label>Recipient <span class="muted">(blank = default reminder recipient)</span>
+            <input name="recipient" type="text" placeholder="someone@yourco.com">
+        </label>
+        <button type="submit">Add</button>
+    </form>
+</div>
+
+<div class="card">
+    <h2>Rules</h2>
+    <table>
+        <thead><tr><th>Label</th><th>Path pattern</th><th>Recipient</th><th>State</th><th></th></tr></thead>
+        <tbody>
+        {% for r in rules %}
+            <tr>
+                <td colspan="3">
+                    <form method="post" action="/notifications/{{ r.id }}/update" class="inline-form">
+                        <input name="label" value="{{ r.label }}" required>
+                        <input name="match_path" value="{{ r.match_path }}" list="post-paths" required style="font-family:monospace">
+                        <input name="recipient" value="{{ r.recipient or '' }}" placeholder="(default)">
+                        <button type="submit">Save</button>
+                    </form>
+                </td>
+                <td>
+                    <form method="post" action="/notifications/{{ r.id }}/toggle">
+                        <button type="submit" class="{{ '' if r.enabled else 'danger' }}">
+                            {{ 'On' if r.enabled else 'Off' }}
+                        </button>
+                    </form>
+                </td>
+                <td>
+                    <form method="post" action="/notifications/{{ r.id }}/delete"
+                          onsubmit="return confirm('Delete rule {{ r.label }}?');">
+                        <button class="danger" type="submit">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        {% else %}
+            <tr><td colspan="5" class="muted">No notification rules.</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

@@ -73,7 +73,25 @@ CREATE TABLE IF NOT EXISTS logs (
     detail  TEXT,
     status  INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY,
+    label      TEXT NOT NULL,
+    match_path TEXT NOT NULL,
+    recipient  TEXT,
+    enabled    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
 """
+
+# Built-in notification rules, seeded once (disabled by default — user opts in).
+NOTIFY_SEED = [
+    ("Bill paid", "/invoices/*/paid"),
+    ("Bill created", "/invoices"),
+    ("Subscription created", "/subscriptions"),
+    ("User created", "/users"),
+    ("Account created", "/accounts"),
+]
 
 
 def now_iso() -> str:
@@ -107,6 +125,56 @@ def init_db() -> None:
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         _migrate(conn)
+        _seed_notifications(conn)
+
+
+def _seed_notifications(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == 0:
+        for label, patt in NOTIFY_SEED:
+            conn.execute(
+                "INSERT INTO notifications (label, match_path, recipient, enabled, created_at) "
+                "VALUES (?, ?, '', 0, ?)",
+                (label, patt, now_iso()),
+            )
+
+
+# --- notification rules -----------------------------------------------------
+def list_notifications():
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM notifications ORDER BY id").fetchall()
+
+
+def enabled_notifications():
+    with get_conn() as conn:
+        return conn.execute("SELECT * FROM notifications WHERE enabled = 1").fetchall()
+
+
+def add_notification(label: str, match_path: str, recipient: str = "") -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO notifications (label, match_path, recipient, enabled, created_at) "
+            "VALUES (?, ?, ?, 1, ?)",
+            (label, match_path, recipient, now_iso()),
+        )
+
+
+def update_notification(nid: int, label: str, match_path: str, recipient: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE notifications SET label = ?, match_path = ?, recipient = ? WHERE id = ?",
+            (label, match_path, recipient, nid),
+        )
+
+
+def set_notification_enabled(nid: int, enabled: bool) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE notifications SET enabled = ? WHERE id = ?",
+                     (1 if enabled else 0, nid))
+
+
+def delete_notification(nid: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM notifications WHERE id = ?", (nid,))
 
 
 # --- settings key/value -----------------------------------------------------

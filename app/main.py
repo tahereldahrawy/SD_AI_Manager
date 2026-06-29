@@ -1,6 +1,7 @@
 """FastAPI app: GUI + validation for users / subscriptions / seats, plus export."""
 import asyncio
 import secrets
+import threading
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, Request
@@ -12,8 +13,9 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import __version__, core, export
 from .auth import authenticate, hash_password
 from .db import (
-    add_log, all_settings, clear_logs, get_conn, get_setting, init_db, now_iso,
-    set_setting, today_iso,
+    add_log, add_notification, all_settings, clear_logs, delete_notification,
+    get_conn, get_setting, init_db, list_notifications, now_iso,
+    set_notification_enabled, set_setting, today_iso, update_notification,
 )
 
 # Human-readable labels for audited POST paths (longest match wins for {id} routes).
@@ -96,8 +98,16 @@ async def _audit(request: Request, call_next):
             user = request.session.get("username")
         except Exception:
             user = None
-        add_log(user, _describe(request.method, request.url.path),
+        path = request.url.path
+        add_log(user, _describe(request.method, path),
                 detail="", status=response.status_code)
+        # Fire matching event notifications off the request path (SMTP may block).
+        if response.status_code < 400:
+            threading.Thread(
+                target=core.fire_notifications,
+                args=(path, user, response.status_code),
+                daemon=True,
+            ).start()
     return response
 
 
@@ -805,6 +815,81 @@ async def settings_save(request: Request, _: int = Depends(login_required)):
     set_setting("sidebar_hidden", ",".join(hidden))
     flash(request, "Settings saved.", "success")
     return RedirectResponse("/settings", status_code=303)
+
+
+# --- event notifications ----------------------------------------------------
+def _suggested_paths() -> list[str]:
+    """POST endpoints as glob patterns ({id} -> *), for the add-rule datalist."""
+    import re
+    out = set()
+    for r in app.routes:
+        methods = getattr(r, "methods", None) or set()
+        path = getattr(r, "path", "")
+        if "POST" in methods and path and path != "/notifications":
+            out.add(re.sub(r"\{[^}]+\}", "*", path))
+    return sorted(out)
+
+
+@app.get("/notifications")
+def notifications_page(request: Request, _: int = Depends(login_required)):
+    rules = list_notifications()
+    smtp_ready = bool(get_setting("smtp_host", "") and get_setting("reminder_to", ""))
+    return templates.TemplateResponse(
+        request, "notifications.html",
+        ctx(request, rules=rules, paths=_suggested_paths(), smtp_ready=smtp_ready),
+    )
+
+
+@app.post("/notifications")
+def notification_add(
+    request: Request,
+    label: str = Form(...),
+    match_path: str = Form(...),
+    recipient: str = Form(""),
+    _: int = Depends(login_required),
+):
+    label, match_path = label.strip(), match_path.strip()
+    if not label or not match_path:
+        flash(request, "Label and path pattern are both required.", "error")
+    else:
+        add_notification(label, match_path, recipient.strip())
+        flash(request, f"Notification '{label}' added (enabled).", "success")
+    return RedirectResponse("/notifications", status_code=303)
+
+
+@app.post("/notifications/{nid}/update")
+def notification_update(
+    request: Request,
+    nid: int,
+    label: str = Form(...),
+    match_path: str = Form(...),
+    recipient: str = Form(""),
+    _: int = Depends(login_required),
+):
+    label, match_path = label.strip(), match_path.strip()
+    if not label or not match_path:
+        flash(request, "Label and path pattern are both required.", "error")
+    else:
+        update_notification(nid, label, match_path, recipient.strip())
+        flash(request, "Notification updated.", "success")
+    return RedirectResponse("/notifications", status_code=303)
+
+
+@app.post("/notifications/{nid}/toggle")
+def notification_toggle(request: Request, nid: int, _: int = Depends(login_required)):
+    with get_conn() as conn:
+        row = conn.execute("SELECT enabled FROM notifications WHERE id = ?", (nid,)).fetchone()
+    if row is not None:
+        set_notification_enabled(nid, not row["enabled"])
+        flash(request, "Notification " + ("disabled." if row["enabled"] else "enabled."), "success")
+    return RedirectResponse("/notifications", status_code=303)
+
+
+@app.post("/notifications/{nid}/delete")
+def notification_delete(request: Request, nid: int, _: int = Depends(login_required)):
+    delete_notification(nid)
+    flash(request, "Notification deleted.", "success")
+    return RedirectResponse("/notifications", status_code=303)
 
 
 # --- system log -------------------------------------------------------------

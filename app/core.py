@@ -1,10 +1,13 @@
 """Shared helpers: sidebar model, currencies, section summaries, email reminders."""
+import fnmatch
 import smtplib
 from calendar import monthrange
 from datetime import date, timedelta
 from email.message import EmailMessage
 
-from .db import all_settings, get_conn, get_setting, today_iso
+from .db import (
+    add_log, all_settings, enabled_notifications, get_conn, get_setting, today_iso,
+)
 
 # System tabs in their natural order. section_key -> label/url.
 SYSTEM_SECTIONS = [
@@ -13,6 +16,7 @@ SYSTEM_SECTIONS = [
     {"key": "subscriptions", "label": "Subscriptions", "url": "/subscriptions"},
     {"key": "invoices", "label": "Billing", "url": "/invoices"},
     {"key": "accounts", "label": "Accounts", "url": "/accounts"},
+    {"key": "notifications", "label": "Notifications", "url": "/notifications"},
     {"key": "logs", "label": "System Log", "url": "/logs"},
     {"key": "settings", "label": "Settings", "url": "/settings"},
 ]
@@ -262,3 +266,59 @@ def send_reminders() -> tuple[bool, str]:
             server.login(user, pw)
         server.send_message(msg)
     return True, f"Reminder sent to {to} ({len(rows)} invoice(s))."
+
+
+# --- event notifications ----------------------------------------------------
+def match_notifications(path: str):
+    """Enabled notification rules whose glob pattern matches a POST path."""
+    return [r for r in enabled_notifications() if fnmatch.fnmatch(path, r["match_path"])]
+
+
+def _smtp_send(s: dict, msg: EmailMessage) -> None:
+    port = int(s.get("smtp_port") or "587")
+    use_tls = (s.get("smtp_tls") or "1") == "1"
+    user = s.get("smtp_user") or ""
+    pw = s.get("smtp_password") or ""
+    with smtplib.SMTP(s.get("smtp_host"), port, timeout=30) as server:
+        if use_tls:
+            server.starttls()
+        if user:
+            server.login(user, pw)
+        server.send_message(msg)
+
+
+def fire_notifications(path: str, account, status) -> None:
+    """Send an email for each enabled rule matching this POST path.
+
+    Runs in a daemon thread (SMTP can block / time out), so it must never raise.
+    Skips silently when SMTP is unconfigured or no rule matches.
+    """
+    try:
+        matched = match_notifications(path)
+        if not matched:
+            return
+        s = all_settings()
+        if not s.get("smtp_host"):
+            return
+        sender = s.get("smtp_from") or s.get("smtp_user") or "noreply@localhost"
+        for r in matched:
+            to = (r["recipient"] or "").strip() or s.get("reminder_to", "")
+            if not to:
+                continue
+            msg = EmailMessage()
+            msg["Subject"] = f"[Subscription Manager] {r['label']}"
+            msg["From"] = sender
+            msg["To"] = to
+            msg.set_content(
+                f"Event: {r['label']}\n"
+                f"By: {account or 'unknown'}\n"
+                f"Path: {path}\n"
+                f"Status: {status}\n"
+            )
+            try:
+                _smtp_send(s, msg)
+                add_log(account, "Notification sent", f"{r['label']} -> {to}", status)
+            except Exception as e:  # noqa: BLE001
+                add_log(account, "Notification failed", f"{r['label']}: {e}", None)
+    except Exception:  # noqa: BLE001 — audit/notify must never break a request
+        pass

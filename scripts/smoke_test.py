@@ -248,6 +248,34 @@ check("default currency now EUR", 'value="EUR" selected' in r.text or "EUR</opti
 r = c.get("/")
 check("hidden tab removed from sidebar", 'href="/accounts"' not in r.text)
 
+# --- event notifications (catalog rules + CRUD + path matching) ---
+from app.core import match_notifications  # noqa: E402
+r = c.get("/notifications")
+check("notifications page seeded", "Bill paid" in r.text and "/invoices/*/paid" in r.text)
+# seeded rules are disabled by default -> nothing matches yet
+check("seeded rules disabled by default", not match_notifications("/invoices/9/paid"))
+# add a custom rule via GUI (enabled on add)
+r = c.post("/notifications", data={"label": "Sub deleted",
+           "match_path": "/subscriptions/*/delete", "recipient": ""}, follow_redirects=True)
+check("add notification rule", "Sub deleted" in r.text)
+check("added rule matches its path", any(x["label"] == "Sub deleted"
+      for x in match_notifications("/subscriptions/3/delete")))
+check("rule ignores non-matching path", not match_notifications("/users"))
+with db.get_conn() as conn:
+    paid_id = conn.execute("SELECT id FROM notifications WHERE label='Bill paid'").fetchone()[0]
+    new_id = conn.execute("SELECT id FROM notifications WHERE label='Sub deleted'").fetchone()[0]
+# toggle the seeded Bill-paid rule on
+c.post(f"/notifications/{paid_id}/toggle")
+check("toggle enables seeded rule", any(x["label"] == "Bill paid"
+      for x in match_notifications("/invoices/9/paid")))
+# update + delete
+c.post(f"/notifications/{new_id}/update", data={"label": "Sub removed",
+       "match_path": "/subscriptions/*/delete", "recipient": "ops@corp.com"})
+r = c.get("/notifications")
+check("update notification rule", "Sub removed" in r.text and "ops@corp.com" in r.text)
+r = c.post(f"/notifications/{new_id}/delete", follow_redirects=True)
+check("delete notification rule", "Sub removed" not in r.text)
+
 # --- system log (audit middleware + view + export + clear) ---
 r = c.get("/logs")
 check("system log lists POST actions", "Create user" in r.text or "Create subscription" in r.text)
